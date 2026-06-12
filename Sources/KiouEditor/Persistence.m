@@ -69,12 +69,12 @@ static int32_t clampInt(int32_t v, int32_t lo, int32_t hi) {
 int32_t kiou_assistDepth(void) {
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     if ([defs objectForKey:kAssistDepthKey] == nil) return 16;
-    return clampInt((int32_t)[defs integerForKey:kAssistDepthKey], 1, 50);
+    return clampInt((int32_t)[defs integerForKey:kAssistDepthKey], 1, 36);
 }
 
 void kiou_setAssistDepth(int32_t v) {
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
-    [defs setInteger:clampInt(v, 1, 50) forKey:kAssistDepthKey];
+    [defs setInteger:clampInt(v, 1, 36) forKey:kAssistDepthKey];
     [defs synchronize];
 }
 

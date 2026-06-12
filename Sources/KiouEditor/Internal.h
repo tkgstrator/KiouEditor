@@ -185,8 +185,9 @@ NSString *kiou_featureLabel(KiouFeature f);
 
 // ---------------------------------------------------------------------------
 // Engine tuning (BeginnerSupportEvaluator). Getters clamp before returning.
-//   depth      1 .. 50  (default 16; retail BSE default is 5, the 50 cap is
-//                        only there to keep the UI stepper sane)
+//   depth      1 .. 36  (default 16; retail BSE default is 5, 36 is the
+//                        practical ceiling the NNUE engine will actually
+//                        reach in a reasonable timeframe)
 //   skillLevel 1 .. 20  (default 20)
 //   hashIndex  0 .. 4   (default 1 = 128 MB; index into the preset table
 //                        {64, 128, 256, 512, 1024} MB)

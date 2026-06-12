@@ -176,7 +176,7 @@ static NSString *const kAboutTwitterURL = @"https://x.com/tkgling";
                                          (int)kiou_assistDepth()];
             self.depthValueLabel = cell.detailTextLabel;
             stepper.minimumValue = 1;
-            stepper.maximumValue = 50;
+            stepper.maximumValue = 36;
             stepper.value = kiou_assistDepth();
             [stepper addTarget:self
                         action:@selector(onDepthChanged:)
