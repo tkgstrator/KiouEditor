@@ -71,15 +71,19 @@
 
 #define KE_SECTION_FEATURES 0
 #define KE_SECTION_ENGINE   1
-#define KE_SECTION_ACTIONS  2
+#define KE_SECTION_ABOUT    2
 #define KE_SECTION_COUNT    3
 
 #define KE_ENGINE_ROW_DEPTH 0
 #define KE_ENGINE_ROW_SKILL 1
 #define KE_ENGINE_ROW_COUNT 2
 
-#define KE_ACTIONS_ROW_RESET_SKIN 0
-#define KE_ACTIONS_ROW_COUNT      1
+#define KE_ABOUT_ROW_REPO    0
+#define KE_ABOUT_ROW_TWITTER 1
+#define KE_ABOUT_ROW_COUNT   2
+
+static NSString *const kAboutRepoURL    = @"https://github.com/tkgstrator/KiouEditor";
+static NSString *const kAboutTwitterURL = @"https://x.com/tkgling";
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
     return KE_SECTION_COUNT;
@@ -89,7 +93,7 @@
     switch (section) {
         case KE_SECTION_FEATURES: return @"Features";
         case KE_SECTION_ENGINE:   return @"Engine";
-        case KE_SECTION_ACTIONS:  return @"Actions";
+        case KE_SECTION_ABOUT:    return @"About";
         default: return nil;
     }
 }
@@ -104,6 +108,9 @@
         return @"Depth feeds both the in-game evaluator and the hint-arrow "
                @"path. Higher depth = stronger but heavier per move.";
     }
+    if (section == KE_SECTION_ABOUT) {
+        return [NSString stringWithFormat:@"build %s", KIOU_EDITOR_COMMIT];
+    }
     return nil;
 }
 
@@ -111,7 +118,7 @@
     switch (section) {
         case KE_SECTION_FEATURES: return KIOU_FEATURE_COUNT;
         case KE_SECTION_ENGINE:   return KE_ENGINE_ROW_COUNT;
-        case KE_SECTION_ACTIONS:  return KE_ACTIONS_ROW_COUNT;
+        case KE_SECTION_ABOUT:    return KE_ABOUT_ROW_COUNT;
         default: return 0;
     }
 }
@@ -178,37 +185,35 @@
         return cell;
     }
 
-    // Actions section
-    static NSString *kId = @"action";
+    // About section
+    static NSString *kId = @"about";
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:kId];
     if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
                                       reuseIdentifier:kId];
     }
-    cell.textLabel.text = @"Reset persisted skin";
-    cell.textLabel.textColor = UIColor.systemRedColor;
+    if (indexPath.row == KE_ABOUT_ROW_REPO) {
+        cell.textLabel.text       = @"GitHub";
+        cell.detailTextLabel.text = kAboutRepoURL;
+    } else {
+        cell.textLabel.text       = @"Author (X)";
+        cell.detailTextLabel.text = kAboutTwitterURL;
+    }
+    cell.detailTextLabel.textColor = UIColor.secondaryLabelColor;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     return cell;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section == KE_SECTION_ACTIONS
-        && indexPath.row == KE_ACTIONS_ROW_RESET_SKIN) {
-        UIAlertController *ac = [UIAlertController
-            alertControllerWithTitle:@"Reset persisted skin?"
-                             message:@"Clears your stored character override. The next time you pick a character in-game it will be saved again."
-                      preferredStyle:UIAlertControllerStyleAlert];
-        [ac addAction:[UIAlertAction actionWithTitle:@"Cancel"
-                                               style:UIAlertActionStyleCancel
-                                             handler:nil]];
-        [ac addAction:[UIAlertAction actionWithTitle:@"Reset"
-                                               style:UIAlertActionStyleDestructive
-                                             handler:^(UIAlertAction *_) {
-            kiou_setPersistedSelection(0);
-            file_log(@"[SETTINGS] persisted skin reset by user");
-        }]];
-        [self presentViewController:ac animated:YES completion:nil];
+    if (indexPath.section != KE_SECTION_ABOUT) return;
+    NSString *str = (indexPath.row == KE_ABOUT_ROW_REPO)
+                  ? kAboutRepoURL : kAboutTwitterURL;
+    NSURL *url = [NSURL URLWithString:str];
+    if (url) {
+        [UIApplication.sharedApplication openURL:url
+                                         options:@{}
+                               completionHandler:nil];
     }
 }
 
