@@ -39,6 +39,10 @@ static SatisfiesRule_t orig_CharacterVoicePlayer_SatisfiesRule = NULL;
 static GetIsLocked_t   orig_VoiceCellModel_get_IsLocked         = NULL;
 
 static bool hook_CharacterVoicePlayer_SatisfiesRule(void *self, int32_t rule) {
+    if (!kiou_featureEnabled(KIOU_FEATURE_VOICE_UNLOCK)) {
+        return orig_CharacterVoicePlayer_SatisfiesRule
+            ? orig_CharacterVoicePlayer_SatisfiesRule(self, rule) : false;
+    }
     (void)self;
     // Unused (9) means "no cue exists" - flipping it would let TryPlay walk
     // into a NULL cue handle. Forward to the original so it returns false.
@@ -52,6 +56,10 @@ static bool hook_CharacterVoicePlayer_SatisfiesRule(void *self, int32_t rule) {
 }
 
 static bool hook_VoiceCellModel_get_IsLocked(void *self) {
+    if (!kiou_featureEnabled(KIOU_FEATURE_VOICE_UNLOCK)) {
+        return orig_VoiceCellModel_get_IsLocked
+            ? orig_VoiceCellModel_get_IsLocked(self) : false;
+    }
     (void)self;
     return false;
 }

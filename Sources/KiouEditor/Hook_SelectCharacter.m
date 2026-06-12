@@ -174,6 +174,9 @@ static SelectCharacterAsync_t orig_SelectCharacterAsync = NULL;
 
 static void *hook_SelectCharacterAsync(void *self, void *args, void *opts,
                                        void *a3, void *a4, void *a5) {
+    if (!kiou_featureEnabled(KIOU_FEATURE_CHAR_BYPASS)) {
+        return orig_SelectCharacterAsync(self, args, opts, a3, a4, a5);
+    }
     if (ptrLooksValid(args)) {
         int32_t requested = readI32(args, OFF_ARGS_SKIN_ID);
         if (requested > 0 && requested != KIOU_SAFE_SKIN_ID) {
@@ -211,6 +214,7 @@ static void hook_SelectCharacterReply_merge(void *self, void *parseContext) {
     if (orig_SelectCharacterReply_merge) {
         orig_SelectCharacterReply_merge(self, parseContext);
     }
+    if (!kiou_featureEnabled(KIOU_FEATURE_CHAR_BYPASS)) return;
     if (!ptrLooksValid(self)) return;
 
     @try {

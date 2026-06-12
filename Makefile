@@ -14,7 +14,7 @@ KiouEditor_FILES = $(shell find Sources/KiouEditor -name '*.m' -o -name '*.c' -o
 KIOU_EDITOR_COMMIT ?= $(shell git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)
 
 KiouEditor_CFLAGS = -fobjc-arc -Wno-unused-function -DKIOU_EDITOR_COMMIT=\"$(KIOU_EDITOR_COMMIT)\"
-KiouEditor_FRAMEWORKS = Foundation
+KiouEditor_FRAMEWORKS = Foundation UIKit
 KiouEditor_LDFLAGS = -lsubstrate
 
 include $(THEOS_MAKE_PATH)/tweak.mk

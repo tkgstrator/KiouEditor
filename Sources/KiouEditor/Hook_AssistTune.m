@@ -26,9 +26,6 @@
 #define OFF_BSE_ANALYSIS_DEPTH       0x18
 #define OFF_BSE_ENGINE_SKILL_LEVEL   0x28
 
-#define KIOU_ASSIST_DEPTH        3
-#define KIOU_ASSIST_SKILL_LEVEL  20
-
 typedef void (*BSECtor_t)(void *self, void *evalPath, void *settings);
 
 static BSECtor_t orig_BSE_ctor = NULL;
@@ -37,20 +34,23 @@ static void hook_BSE_ctor(void *self, void *evalPath, void *settings) {
     if (orig_BSE_ctor) {
         orig_BSE_ctor(self, evalPath, settings);
     }
+    // Tune evaluator parameters regardless of ASSIST_ENABLE; the user
+    // controls the engaged hint arrow via that flag in Hook_AssistEnable.
     if (!ptrLooksValid(self)) return;
     @try {
+        int32_t targetDepth = kiou_assistDepth();
+        int32_t targetSkill = kiou_assistSkillLevel();
         int32_t origDepth = readI32(self, OFF_BSE_ANALYSIS_DEPTH);
         int32_t origSkill = readI32(self, OFF_BSE_ENGINE_SKILL_LEVEL);
-        if (origDepth != KIOU_ASSIST_DEPTH) {
-            writeI32(self, OFF_BSE_ANALYSIS_DEPTH, KIOU_ASSIST_DEPTH);
+        if (origDepth != targetDepth) {
+            writeI32(self, OFF_BSE_ANALYSIS_DEPTH, targetDepth);
         }
-        if (origSkill != KIOU_ASSIST_SKILL_LEVEL) {
-            writeI32(self, OFF_BSE_ENGINE_SKILL_LEVEL, KIOU_ASSIST_SKILL_LEVEL);
+        if (origSkill != targetSkill) {
+            writeI32(self, OFF_BSE_ENGINE_SKILL_LEVEL, targetSkill);
         }
         file_log([NSString stringWithFormat:
                   @"[ASSIST] BSE tuned: depth %d -> %d, skillLevel %d -> %d",
-                  origDepth, KIOU_ASSIST_DEPTH,
-                  origSkill, KIOU_ASSIST_SKILL_LEVEL]);
+                  origDepth, targetDepth, origSkill, targetSkill]);
     } @catch (NSException *e) {
         file_log([NSString stringWithFormat:
                   @"[ASSIST] BSE ctor override exception: %@", e]);
@@ -65,5 +65,5 @@ void install_AssistTune_hook(uintptr_t unityBase) {
     file_log([NSString stringWithFormat:
               @"BeginnerSupportEvaluator.ctor hooked @0x%lx (base+0x%x) depth=%d skill=%d",
               (unsigned long)addr, RVA_BEGINNER_SUPPORT_EVALUATOR_CTOR,
-              KIOU_ASSIST_DEPTH, KIOU_ASSIST_SKILL_LEVEL]);
+              (int)kiou_assistDepth(), (int)kiou_assistSkillLevel()]);
 }

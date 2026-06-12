@@ -114,15 +114,18 @@ static void hook_MatchingPlayer_merge(void *self, void *parseContext) {
 
         // Force assist-on for self, even when the CPU-match toggle is off.
         // Done regardless of whether a persisted skin override is active.
-        uint8_t curBSE = readU8(self, OFF_MP_ENABLE_BEGINNER_SUPPORT);
-        if (curBSE != 1) {
-            writeU8(self, OFF_MP_ENABLE_BEGINNER_SUPPORT, 1);
-            file_log([NSString stringWithFormat:
-                      @"[MATCH] enableBeginnerSupport %d -> 1 (self)",
-                      (int)curBSE]);
+        if (kiou_featureEnabled(KIOU_FEATURE_MATCH_ASSIST)) {
+            uint8_t curBSE = readU8(self, OFF_MP_ENABLE_BEGINNER_SUPPORT);
+            if (curBSE != 1) {
+                writeU8(self, OFF_MP_ENABLE_BEGINNER_SUPPORT, 1);
+                file_log([NSString stringWithFormat:
+                          @"[MATCH] enableBeginnerSupport %d -> 1 (self)",
+                          (int)curBSE]);
+            }
         }
 
         // Skin / character rewrite gated on a persisted SelectCharacter pick.
+        if (!kiou_featureEnabled(KIOU_FEATURE_CHAR_BYPASS)) return;
         int32_t target = kiou_persistedSelection();
         if (target == 0) return;
         if (curSkinId == target && curCharId == target) return;

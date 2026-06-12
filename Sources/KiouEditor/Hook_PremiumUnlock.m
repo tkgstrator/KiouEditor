@@ -36,11 +36,19 @@ static IsPremiumUser_t  orig_HistoryDetailReply_IsPremiumUser = NULL;
 static ReplyMergeFrom_t orig_HistoryDetailReply_merge = NULL;
 
 static bool hook_KifuDetailModel_IsPremiumUser(void *self) {
+    if (!kiou_featureEnabled(KIOU_FEATURE_PREMIUM_UNLOCK)) {
+        return orig_KifuDetailModel_IsPremiumUser
+            ? orig_KifuDetailModel_IsPremiumUser(self) : false;
+    }
     (void)self;
     return true;
 }
 
 static bool hook_HistoryDetailReply_IsPremiumUser(void *self) {
+    if (!kiou_featureEnabled(KIOU_FEATURE_PREMIUM_UNLOCK)) {
+        return orig_HistoryDetailReply_IsPremiumUser
+            ? orig_HistoryDetailReply_IsPremiumUser(self) : false;
+    }
     (void)self;
     return true;
 }
@@ -49,6 +57,7 @@ static void hook_HistoryDetailReply_merge(void *self, void *parseContext) {
     if (orig_HistoryDetailReply_merge) {
         orig_HistoryDetailReply_merge(self, parseContext);
     }
+    if (!kiou_featureEnabled(KIOU_FEATURE_PREMIUM_UNLOCK)) return;
     if (!ptrLooksValid(self)) return;
     @try {
         uint8_t before = readU8(self, OFF_SHOGI_HISTORY_DETAIL_REPLY_IS_PREMIUM_USER);

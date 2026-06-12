@@ -151,3 +151,34 @@ void kiou_applyPersistedSelectionToLists(void *charArr, int32_t charCount,
 // memory beyond standard ARC.
 NSString *kiou_selfUserId(void);
 void      kiou_setSelfUserId(NSString *uid);
+
+// ---------------------------------------------------------------------------
+// Runtime feature toggles. Each hook gates its tamper logic on its own
+// flag - flipping a flag off causes the hook to fall through to orig() and
+// behave like vanilla. Defaults to YES for every feature.
+// ---------------------------------------------------------------------------
+typedef NS_ENUM(NSInteger, KiouFeature) {
+    KIOU_FEATURE_ITEM_UNLOCK = 0,    // Hook_SyncItemList ownership writes
+    KIOU_FEATURE_CHAR_BYPASS,        // Hook_SelectCharacter SAFE_ID swap
+    KIOU_FEATURE_FRIEND_UNHIDE,      // Hook_FriendUnhide SetActive + clone
+    KIOU_FEATURE_PREMIUM_UNLOCK,     // Hook_PremiumUnlock forced true
+    KIOU_FEATURE_MATCH_ASSIST,       // Hook_MatchingPlayer enable beginner support
+    KIOU_FEATURE_VOICE_UNLOCK,       // Hook_VoiceUnlock + Hook_SyncItemList intimacy pin
+    KIOU_FEATURE_ASSIST_ENABLE,      // Hook_AssistEnable force enabled + depth
+    KIOU_FEATURE_COUNT,
+};
+
+bool kiou_featureEnabled(KiouFeature f);
+void kiou_setFeatureEnabled(KiouFeature f, bool enabled);
+NSString *kiou_featureLabel(KiouFeature f);
+
+// ---------------------------------------------------------------------------
+// Engine tuning (BeginnerSupportEvaluator). Both have defined floors / caps
+// matching the in-game UI ranges - getters clamp before returning.
+//   depth      1 .. 30  (default 3)
+//   skillLevel 1 .. 20  (default 20)
+// ---------------------------------------------------------------------------
+int32_t kiou_assistDepth(void);
+void    kiou_setAssistDepth(int32_t v);
+int32_t kiou_assistSkillLevel(void);
+void    kiou_setAssistSkillLevel(int32_t v);

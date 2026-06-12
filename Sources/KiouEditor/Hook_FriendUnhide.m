@@ -82,14 +82,28 @@ static void resolveIl2cppBridge(void) {
 // ---------------------------------------------------------------------------
 
 static void *g_method_get_gameObject     = NULL;  // Component.get_gameObject
-static void *g_method_get_transform      = NULL;  // Component.get_transform
+static void *g_method_get_transform      = NULL;  // Component.get_transform (cached off Component-derived obj)
+static void *g_method_GO_get_transform   = NULL;  // GameObject.get_transform
 static void *g_method_SetActive          = NULL;  // GameObject.SetActive
 static void *g_method_Instantiate2       = NULL;  // UnityEngine.Object.Instantiate(Object, Transform)
 static void *g_method_Instantiate1NonGen = NULL;  // UnityEngine.Object.Instantiate(Object) non-generic
+static void *g_method_Tf_get_parent      = NULL;  // Transform.get_parent
+static void *g_method_Tf_SetParent       = NULL;  // Transform.SetParent(Transform,bool)
+static void *g_method_Tf_GetSiblingIndex = NULL;  // Transform.GetSiblingIndex
+static void *g_method_Tf_SetSiblingIndex = NULL;  // Transform.SetSiblingIndex(int)
+static void *g_method_Tf_get_childCount  = NULL;  // Transform.get_childCount
+static void *g_method_Tf_GetChild        = NULL;  // Transform.GetChild(int)
+static void *g_method_Obj_get_name       = NULL;  // UnityEngine.Object.get_name
 
 // Once-per-app-session guard so a HomeUtilityPresenter re-creation does not
 // pile up duplicate clones on the home screen.
 static bool g_cloneCreated = false;
+
+// GameObject pointer of the menu-button clone. The clone's own UIButtonBase
+// component is not tracked directly - instead the OnPointerClick hook calls
+// Component.get_gameObject(self) and compares against this pointer. Set
+// once Phase 2a's Instantiate succeeds, read by hook_UIBtn_OnPointerClick.
+static void *g_cloneGo = NULL;
 
 // One-time guard for the Instantiate-method enumeration recon (Phase 2a
 // debug). After the first fire we know which method handle is the
@@ -136,6 +150,187 @@ static void setActive(void *gameObject, bool value) {
                   g_method_SetActive, klass]);
     }
     invokeSetActive(g_method_SetActive, gameObject, value);
+}
+
+// GameObject.get_transform - returns the GameObject's transform. Separate
+// from the Component.get_transform cache because they live on different
+// klasses and the il2cpp method handles are not interchangeable.
+static void *goTransformOf(void *gameObject) {
+    if (!ptrLooksValid(gameObject)) return NULL;
+    if (!g_method_GO_get_transform) {
+        if (!p_il2cpp_object_get_class || !p_il2cpp_class_get_method_from_name) return NULL;
+        void *klass = p_il2cpp_object_get_class(gameObject);
+        if (!klass) return NULL;
+        g_method_GO_get_transform = p_il2cpp_class_get_method_from_name(klass, "get_transform", 0);
+        file_log([NSString stringWithFormat:
+                  @"[HOME] cached GameObject.get_transform method=%p (klass=%p)",
+                  g_method_GO_get_transform, klass]);
+    }
+    return invoke0(g_method_GO_get_transform, gameObject);
+}
+
+// Transform.get_parent - the Transform parent in the scene hierarchy.
+static void *transformParentOf(void *transformObj) {
+    if (!ptrLooksValid(transformObj)) return NULL;
+    if (!g_method_Tf_get_parent) {
+        if (!p_il2cpp_object_get_class || !p_il2cpp_class_get_method_from_name) return NULL;
+        void *klass = p_il2cpp_object_get_class(transformObj);
+        if (!klass) return NULL;
+        g_method_Tf_get_parent = p_il2cpp_class_get_method_from_name(klass, "get_parent", 0);
+        file_log([NSString stringWithFormat:
+                  @"[HOME] cached Transform.get_parent method=%p (klass=%p)",
+                  g_method_Tf_get_parent, klass]);
+    }
+    return invoke0(g_method_Tf_get_parent, transformObj);
+}
+
+// Transform.SetParent(Transform parent, bool worldPositionStays).
+// runtime_invoke hung the main thread on this method (same invoker_method
+// problem the static Instantiate hit), so we go through methodPointer.
+// IL2CPP instance-method ABI for this signature:
+//   void (Transform* this, Transform* parent, bool wps, MethodInfo* method)
+typedef void (*Tf_SetParent_directABI_t)(void *thisTf, void *parent, bool wps, void *methodInfo);
+
+static void transformSetParent(void *transformObj, void *newParent, bool worldPositionStays) {
+    if (!ptrLooksValid(transformObj)) return;
+    if (!g_method_Tf_SetParent) {
+        if (!p_il2cpp_object_get_class || !p_il2cpp_class_get_method_from_name) return;
+        void *klass = p_il2cpp_object_get_class(transformObj);
+        if (!klass) return;
+        g_method_Tf_SetParent = p_il2cpp_class_get_method_from_name(klass, "SetParent", 2);
+        file_log([NSString stringWithFormat:
+                  @"[HOME] cached Transform.SetParent(Tf,bool) method=%p (klass=%p)",
+                  g_method_Tf_SetParent, klass]);
+    }
+    if (!g_method_Tf_SetParent) return;
+    void *methodPtr = *(void **)g_method_Tf_SetParent;
+    if (!methodPtr) {
+        file_log(@"[HOME] Tf.SetParent direct: methodPointer NULL");
+        return;
+    }
+    file_log([NSString stringWithFormat:
+              @"[HOME] Tf.SetParent direct: methodPtr=%p this=%p parent=%p wps=%d",
+              methodPtr, transformObj, newParent, (int)worldPositionStays]);
+    ((Tf_SetParent_directABI_t)methodPtr)(transformObj, newParent, worldPositionStays, g_method_Tf_SetParent);
+}
+
+// Transform.GetSiblingIndex -> Int32. Direct call instead of runtime_invoke
+// for the same reason as above; this also dodges the boxed value-type
+// return path entirely (the direct ABI just returns int32 by value).
+typedef int32_t (*Tf_GetSiblingIndex_directABI_t)(void *thisTf, void *methodInfo);
+
+static int32_t transformGetSiblingIndex(void *transformObj) {
+    if (!ptrLooksValid(transformObj)) return -1;
+    if (!g_method_Tf_GetSiblingIndex) {
+        if (!p_il2cpp_object_get_class || !p_il2cpp_class_get_method_from_name) return -1;
+        void *klass = p_il2cpp_object_get_class(transformObj);
+        if (!klass) return -1;
+        g_method_Tf_GetSiblingIndex = p_il2cpp_class_get_method_from_name(klass, "GetSiblingIndex", 0);
+        file_log([NSString stringWithFormat:
+                  @"[HOME] cached Transform.GetSiblingIndex method=%p (klass=%p)",
+                  g_method_Tf_GetSiblingIndex, klass]);
+    }
+    if (!g_method_Tf_GetSiblingIndex) return -1;
+    void *methodPtr = *(void **)g_method_Tf_GetSiblingIndex;
+    if (!methodPtr) {
+        file_log(@"[HOME] Tf.GetSiblingIndex direct: methodPointer NULL");
+        return -1;
+    }
+    return ((Tf_GetSiblingIndex_directABI_t)methodPtr)(transformObj, g_method_Tf_GetSiblingIndex);
+}
+
+typedef int32_t (*Tf_get_childCount_directABI_t)(void *thisTf, void *methodInfo);
+typedef void *(*Tf_GetChild_directABI_t)(void *thisTf, int32_t idx, void *methodInfo);
+typedef void *(*Obj_get_name_directABI_t)(void *thisObj, void *methodInfo);
+
+static int32_t transformChildCount(void *transformObj) {
+    if (!ptrLooksValid(transformObj)) return 0;
+    if (!g_method_Tf_get_childCount) {
+        if (!p_il2cpp_object_get_class || !p_il2cpp_class_get_method_from_name) return 0;
+        void *klass = p_il2cpp_object_get_class(transformObj);
+        if (!klass) return 0;
+        g_method_Tf_get_childCount = p_il2cpp_class_get_method_from_name(klass, "get_childCount", 0);
+    }
+    if (!g_method_Tf_get_childCount) return 0;
+    void *methodPtr = *(void **)g_method_Tf_get_childCount;
+    if (!methodPtr) return 0;
+    return ((Tf_get_childCount_directABI_t)methodPtr)(transformObj, g_method_Tf_get_childCount);
+}
+
+static void *transformGetChild(void *transformObj, int32_t idx) {
+    if (!ptrLooksValid(transformObj)) return NULL;
+    if (!g_method_Tf_GetChild) {
+        if (!p_il2cpp_object_get_class || !p_il2cpp_class_get_method_from_name) return NULL;
+        void *klass = p_il2cpp_object_get_class(transformObj);
+        if (!klass) return NULL;
+        g_method_Tf_GetChild = p_il2cpp_class_get_method_from_name(klass, "GetChild", 1);
+    }
+    if (!g_method_Tf_GetChild) return NULL;
+    void *methodPtr = *(void **)g_method_Tf_GetChild;
+    if (!methodPtr) return NULL;
+    return ((Tf_GetChild_directABI_t)methodPtr)(transformObj, idx, g_method_Tf_GetChild);
+}
+
+// UnityEngine.Object.get_name -> System.String. Walks up the klass chain
+// once on first hit since Transform's klass redeclares get_name only if
+// overridden - but get_method_from_name searches parents too in IL2CPP.
+static NSString *objectName(void *unityObj) {
+    if (!ptrLooksValid(unityObj)) return nil;
+    if (!g_method_Obj_get_name) {
+        if (!p_il2cpp_object_get_class || !p_il2cpp_class_get_method_from_name) return nil;
+        void *klass = p_il2cpp_object_get_class(unityObj);
+        if (!klass) return nil;
+        g_method_Obj_get_name = p_il2cpp_class_get_method_from_name(klass, "get_name", 0);
+        file_log([NSString stringWithFormat:
+                  @"[HOME] cached Object.get_name method=%p (klass=%p)",
+                  g_method_Obj_get_name, klass]);
+    }
+    if (!g_method_Obj_get_name) return nil;
+    void *methodPtr = *(void **)g_method_Obj_get_name;
+    if (!methodPtr) return nil;
+    void *strObj = ((Obj_get_name_directABI_t)methodPtr)(unityObj, g_method_Obj_get_name);
+    return il2cppStringToNSString(strObj);
+}
+
+// Walk the Transform tree under `tfObj`, log each node's name with
+// indentation. The clone is brand new so we cap depth to keep the log
+// readable. Used purely as a recon pass for Phase 2c (label rewrite).
+static void dumpHierarchy(void *tfObj, int depth, int maxDepth) {
+    if (!ptrLooksValid(tfObj)) return;
+    if (depth > maxDepth) return;
+    NSString *name = objectName(tfObj);
+    NSMutableString *indent = [NSMutableString string];
+    for (int i = 0; i < depth; i++) [indent appendString:@"  "];
+    file_log([NSString stringWithFormat:
+              @"[HOME] hier %@tf=%p name=%@",
+              indent, tfObj, name ?: @"<null>"]);
+    int32_t cc = transformChildCount(tfObj);
+    for (int32_t i = 0; i < cc; i++) {
+        void *child = transformGetChild(tfObj, i);
+        dumpHierarchy(child, depth + 1, maxDepth);
+    }
+}
+
+typedef void (*Tf_SetSiblingIndex_directABI_t)(void *thisTf, int32_t idx, void *methodInfo);
+
+static void transformSetSiblingIndex(void *transformObj, int32_t idx) {
+    if (!ptrLooksValid(transformObj)) return;
+    if (!g_method_Tf_SetSiblingIndex) {
+        if (!p_il2cpp_object_get_class || !p_il2cpp_class_get_method_from_name) return;
+        void *klass = p_il2cpp_object_get_class(transformObj);
+        if (!klass) return;
+        g_method_Tf_SetSiblingIndex = p_il2cpp_class_get_method_from_name(klass, "SetSiblingIndex", 1);
+        file_log([NSString stringWithFormat:
+                  @"[HOME] cached Transform.SetSiblingIndex method=%p (klass=%p)",
+                  g_method_Tf_SetSiblingIndex, klass]);
+    }
+    if (!g_method_Tf_SetSiblingIndex) return;
+    void *methodPtr = *(void **)g_method_Tf_SetSiblingIndex;
+    if (!methodPtr) {
+        file_log(@"[HOME] Tf.SetSiblingIndex direct: methodPointer NULL");
+        return;
+    }
+    ((Tf_SetSiblingIndex_directABI_t)methodPtr)(transformObj, idx, g_method_Tf_SetSiblingIndex);
 }
 
 // Component.get_transform - returns this.transform.
@@ -310,12 +505,49 @@ static void *instantiateCloneWithParent(void *originalGo, void *parentTransform)
 }
 
 // ---------------------------------------------------------------------------
+// Settings UI bridge - implemented in Hook_SettingsUI.m (Phase 2e). Called
+// from the OnPointerClick hook when the clone is tapped.
+// ---------------------------------------------------------------------------
+extern void kioueditor_presentSettings(void);
+
+// ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
+#define RVA_UIBUTTONBASE_ONPOINTERCLICK 0x5DD1E08
+
 typedef void (*HUP_ctor_t)(void *self, void *view);
+typedef void (*UIBtn_OnPointerClick_t)(void *self, void *eventData, void *methodInfo);
 
 static HUP_ctor_t orig_HUP_ctor = NULL;
+static UIBtn_OnPointerClick_t orig_UIBtn_OnPointerClick = NULL;
+
+// UIButtonBase.IPointerClickHandler.OnPointerClick - fires for every
+// UIButtonBase-derived button (including UIButton, since UIButton does not
+// override slot 17). We compare each call's `this.gameObject` against the
+// menu-button clone we created in Phase 2a; on match, dispatch to the
+// KiouEditor settings UI and skip orig (the clone's _onClick Subject has
+// no subscribers anyway, so calling orig would be a no-op, but skipping it
+// also avoids any future hidden subscribers).
+static void hook_UIBtn_OnPointerClick(void *self, void *eventData, void *methodInfo) {
+    @try {
+        if (g_cloneGo && ptrLooksValid(self)) {
+            void *thisGo = gameObjectOf(self);
+            if (thisGo == g_cloneGo) {
+                file_log([NSString stringWithFormat:
+                          @"[HOME] click on clone! self=%p go=%p", self, thisGo]);
+                kioueditor_presentSettings();
+                return;
+            }
+        }
+    } @catch (NSException *e) {
+        file_log([NSString stringWithFormat:
+                  @"[HOME] OnPointerClick exc: %@", e]);
+    }
+    if (orig_UIBtn_OnPointerClick) {
+        orig_UIBtn_OnPointerClick(self, eventData, methodInfo);
+    }
+}
 
 static void hook_HUP_ctor(void *self, void *view) {
     if (orig_HUP_ctor) {
@@ -333,6 +565,9 @@ static void hook_HUP_ctor(void *self, void *view) {
                   @"[HOME] HomeUtilityView@%p buttons: menu=%p gift=%p friend=%p",
                   view, menuBtn, giftBtn, friendBtn]);
 
+        if (!kiou_featureEnabled(KIOU_FEATURE_FRIEND_UNHIDE)) {
+            return;
+        }
         if (ptrLooksValid(friendBtn)) {
             void *friendGo = gameObjectOf(friendBtn);
             if (ptrLooksValid(friendGo)) {
@@ -355,8 +590,7 @@ static void hook_HUP_ctor(void *self, void *view) {
         (void)logInstantiateMethods;
         (void)instantiateCloneNonGeneric;
         (void)instantiateCloneWithParent;
-        (void)transformOf;
-        if (!g_cloneCreated && ptrLooksValid(menuBtn)) {
+        if (!g_cloneCreated && ptrLooksValid(menuBtn) && ptrLooksValid(friendBtn)) {
             file_log([NSString stringWithFormat:
                       @"[HOME] presenter.ctor on main thread=%d",
                       (int)[NSThread isMainThread]]);
@@ -365,8 +599,49 @@ static void hook_HUP_ctor(void *self, void *view) {
                 void *cloneGo = instantiateCloneDirect(menuGo);
                 if (ptrLooksValid(cloneGo)) {
                     g_cloneCreated = true;
+                    g_cloneGo = cloneGo;
                     file_log([NSString stringWithFormat:
                               @"[HOME] direct: clone gameObject=%p", cloneGo]);
+
+                    // Phase 2b: slot the clone into the friend button's parent
+                    // container, one position below the friend button.
+                    void *friendTf = transformOf(friendBtn);
+                    void *cloneTf  = goTransformOf(cloneGo);
+                    file_log([NSString stringWithFormat:
+                              @"[HOME] phase2b: friendTf=%p cloneTf=%p",
+                              friendTf, cloneTf]);
+                    if (ptrLooksValid(friendTf) && ptrLooksValid(cloneTf)) {
+                        void *parentTf = transformParentOf(friendTf);
+                        file_log([NSString stringWithFormat:
+                                  @"[HOME] phase2b: parentTf=%p", parentTf]);
+                        if (ptrLooksValid(parentTf)) {
+                            transformSetParent(cloneTf, parentTf, false);
+                            int32_t friendIdx = transformGetSiblingIndex(friendTf);
+                            file_log([NSString stringWithFormat:
+                                      @"[HOME] phase2b: friend siblingIndex=%d", friendIdx]);
+                            if (friendIdx >= 0) {
+                                transformSetSiblingIndex(cloneTf, friendIdx + 1);
+                                file_log([NSString stringWithFormat:
+                                          @"[HOME] phase2b: clone -> siblingIndex=%d",
+                                          friendIdx + 1]);
+                            }
+                        }
+                    }
+
+                    // Phase 2c recon: dump the clone's transform subtree so
+                    // we can spot the label node (TMP / Text) to overwrite.
+                    file_log(@"[HOME] phase2c recon: dump clone hierarchy");
+                    dumpHierarchy(cloneTf, 0, 6);
+
+                    // Compare against the live menu / friend buttons - if
+                    // the clone tree looks too shallow it might be because
+                    // children spawn lazily after ctor; the live buttons
+                    // are fully populated by now.
+                    file_log(@"[HOME] phase2c recon: dump menu (original) hierarchy");
+                    void *menuTf = transformOf(menuBtn);
+                    dumpHierarchy(menuTf, 0, 6);
+                    file_log(@"[HOME] phase2c recon: dump friend (live) hierarchy");
+                    dumpHierarchy(friendTf, 0, 6);
                 } else {
                     file_log(@"[HOME] direct: Instantiate returned NULL/invalid");
                 }
@@ -380,11 +655,22 @@ static void hook_HUP_ctor(void *self, void *view) {
 void install_FriendUnhide_hook(uintptr_t unityBase) {
     resolveIl2cppBridge();
 
-    uintptr_t addr = unityBase + RVA_HOME_UTILITY_PRESENTER_CTOR;
-    MSHookFunction((void *)addr,
-                   (void *)hook_HUP_ctor,
-                   (void **)&orig_HUP_ctor);
-    file_log([NSString stringWithFormat:
-              @"HomeUtilityPresenter.ctor hooked @0x%lx (base+0x%x)",
-              (unsigned long)addr, RVA_HOME_UTILITY_PRESENTER_CTOR]);
+    {
+        uintptr_t addr = unityBase + RVA_HOME_UTILITY_PRESENTER_CTOR;
+        MSHookFunction((void *)addr,
+                       (void *)hook_HUP_ctor,
+                       (void **)&orig_HUP_ctor);
+        file_log([NSString stringWithFormat:
+                  @"HomeUtilityPresenter.ctor hooked @0x%lx (base+0x%x)",
+                  (unsigned long)addr, RVA_HOME_UTILITY_PRESENTER_CTOR]);
+    }
+    {
+        uintptr_t addr = unityBase + RVA_UIBUTTONBASE_ONPOINTERCLICK;
+        MSHookFunction((void *)addr,
+                       (void *)hook_UIBtn_OnPointerClick,
+                       (void **)&orig_UIBtn_OnPointerClick);
+        file_log([NSString stringWithFormat:
+                  @"UIButtonBase.OnPointerClick hooked @0x%lx (base+0x%x)",
+                  (unsigned long)addr, RVA_UIBUTTONBASE_ONPOINTERCLICK]);
+    }
 }

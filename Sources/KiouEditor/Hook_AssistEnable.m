@@ -22,8 +22,6 @@
 #define RVA_RESOLVED_BSUPPORT_GET_ENABLED 0x593E630
 #define RVA_RESOLVED_BSUPPORT_GET_DEPTH   0x593E650
 
-#define KIOU_ASSIST_GATE_DEPTH 3
-
 typedef bool    (*BSupportGetBool_t)(void *self);
 typedef int32_t (*BSupportGetI32_t)(void *self);
 
@@ -31,13 +29,19 @@ static BSupportGetBool_t orig_RBS_get_Enabled = NULL;
 static BSupportGetI32_t  orig_RBS_get_Depth   = NULL;
 
 static bool hook_RBS_get_Enabled(void *self) {
+    if (!kiou_featureEnabled(KIOU_FEATURE_ASSIST_ENABLE)) {
+        return orig_RBS_get_Enabled ? orig_RBS_get_Enabled(self) : false;
+    }
     (void)self;
     return true;
 }
 
 static int32_t hook_RBS_get_Depth(void *self) {
+    if (!kiou_featureEnabled(KIOU_FEATURE_ASSIST_ENABLE)) {
+        return orig_RBS_get_Depth ? orig_RBS_get_Depth(self) : 0;
+    }
     (void)self;
-    return KIOU_ASSIST_GATE_DEPTH;
+    return kiou_assistDepth();
 }
 
 void install_AssistEnable_hook(uintptr_t unityBase) {
@@ -58,6 +62,6 @@ void install_AssistEnable_hook(uintptr_t unityBase) {
         file_log([NSString stringWithFormat:
                   @"ResolvedBeginnerSupport.get_Depth hooked @0x%lx (base+0x%x) - forced %d",
                   (unsigned long)addr, RVA_RESOLVED_BSUPPORT_GET_DEPTH,
-                  KIOU_ASSIST_GATE_DEPTH]);
+                  (int)kiou_assistDepth()]);
     }
 }

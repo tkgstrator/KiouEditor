@@ -69,7 +69,16 @@ static void hook_SyncItemListReply_merge(void *self, void *parseContext) {
     if (g_inHook) return;
     g_inHook = 1;
     @try {
-        if (ptrLooksValid(self)) {
+        if (!ptrLooksValid(self)) goto done;
+        bool itemUnlock  = kiou_featureEnabled(KIOU_FEATURE_ITEM_UNLOCK);
+        // Intimacy-pin is part of Voice Unlock: maxing intimacyLevel makes the
+        // CharacterVoicePlayer rule lookups match Level1..Level5 + Complete
+        // out of the box, so the two are toggled together.
+        bool intimacyMax = kiou_featureEnabled(KIOU_FEATURE_VOICE_UNLOCK);
+        bool charBypass  = kiou_featureEnabled(KIOU_FEATURE_CHAR_BYPASS);
+
+        // Supplies block. Pure observation when itemUnlock is off.
+        if (itemUnlock) {
             void *arr = NULL;
             int32_t count = 0;
             if (readRepeatedField(self, 0x20, &arr, &count)) {
@@ -105,102 +114,102 @@ static void hook_SyncItemListReply_merge(void *self, void *parseContext) {
             } else {
                 file_log(@"[SyncItemListReply] updatedSupplyList unreadable/empty");
             }
+        }
 
-            // Characters (updatedCharacterList_ @0x28)
-            {
-                void *charArr = NULL;
-                int32_t charCount = 0;
-                if (readRepeatedField(self, 0x28, &charArr, &charCount)) {
+        // Characters (updatedCharacterList_ @0x28). Walks the list when any
+        // of itemUnlock / intimacyMax is on; flips only the fields the
+        // active flags own.
+        if (itemUnlock || intimacyMax) {
+            void *charArr = NULL;
+            int32_t charCount = 0;
+            if (readRepeatedField(self, 0x28, &charArr, &charCount)) {
+                file_log([NSString stringWithFormat:
+                          @"[UNLOCK-CHAR] updatedCharacterList count=%d", charCount]);
+                int32_t charTotal    = 0;
+                int32_t contractFlip = 0;
+                int32_t acquiredFlip = 0;
+                int32_t intimacyFlip = 0;
+                for (int32_t i = 0; i < charCount; i++) {
+                    void *elem = readArrayElem(charArr, i);
+                    if (!elem) continue;
+                    int32_t mstCharacterId = readI32(elem, 0x18);
+                    int32_t intimacyLevel  = readI32(elem, 0x1C);
+                    uint8_t isContract     = readU8(elem, 0x20);
+                    uint8_t isAcquired     = readU8(elem, 0x30);
                     file_log([NSString stringWithFormat:
-                              @"[UNLOCK-CHAR] updatedCharacterList count=%d", charCount]);
-                    int32_t charTotal     = 0;
-                    int32_t contractFlip  = 0;
-                    int32_t acquiredFlip  = 0;
-                    int32_t intimacyFlip  = 0;
-                    for (int32_t i = 0; i < charCount; i++) {
-                        void *elem = readArrayElem(charArr, i);
-                        if (!elem) continue;
-                        int32_t mstCharacterId = readI32(elem, 0x18);
-                        int32_t intimacyLevel  = readI32(elem, 0x1C);
-                        uint8_t isContract     = readU8(elem, 0x20);
-                        uint8_t isAcquired     = readU8(elem, 0x30);
-                        file_log([NSString stringWithFormat:
-                                  @"[UNLOCK-CHAR]   [%d] mstCharacterId=%d intimacyLevel=%d isContract=%d isAcquired=%d",
-                                  i, mstCharacterId, intimacyLevel,
-                                  (int)isContract, (int)isAcquired]);
+                              @"[UNLOCK-CHAR]   [%d] mstCharacterId=%d intimacyLevel=%d isContract=%d isAcquired=%d",
+                              i, mstCharacterId, intimacyLevel,
+                              (int)isContract, (int)isAcquired]);
 
-                        if (!isPlausibleMstId(mstCharacterId)) continue;
-                        charTotal++;
+                    if (!isPlausibleMstId(mstCharacterId)) continue;
+                    charTotal++;
 
+                    if (itemUnlock) {
                         if (!isContract) { writeU8(elem, 0x20, 1); contractFlip++; }
                         if (!isAcquired) { writeU8(elem, 0x30, 1); acquiredFlip++; }
                         writeU8(elem, 0x46, 1);
                         if (readI32(elem, 0x40) <= 0) writeI32(elem, 0x40, 1);
-
-                        // Pin intimacy to max so CharacterVoicePlayer is built
-                        // with intimacyLevel=5 and SatisfiesRule lets every
-                        // Level1..Level5 + Complete cue through naturally.
-                        // VoiceRuleType ranges Level1=3..Level5=7 (TDI 22258),
-                        // so the in-game cap is 5.
+                    }
+                    if (intimacyMax) {
+                        // CharacterVoicePlayer is built off intimacyLevel; max
+                        // it to 5 so every cue rule passes.
                         if (intimacyLevel < 5) { writeI32(elem, 0x1C, 5); intimacyFlip++; }
                         writeU8(elem, 0x47, 1);
                     }
-                    file_log([NSString stringWithFormat:
-                              @"[UNLOCK-CHAR] characters total=%d contract_unlocked=%d acquired_unlocked=%d intimacy_maxed=%d",
-                              charTotal, contractFlip, acquiredFlip, intimacyFlip]);
-                } else {
-                    file_log(@"[UNLOCK-CHAR] updatedCharacterList unreadable/empty");
                 }
-            }
-
-            // Character skins (updatedCharacterSkinList_ @0x30)
-            {
-                void *skinArr = NULL;
-                int32_t skinCount = 0;
-                if (readRepeatedField(self, 0x30, &skinArr, &skinCount)) {
-                    file_log([NSString stringWithFormat:
-                              @"[UNLOCK-CHAR] updatedCharacterSkinList count=%d", skinCount]);
-                    int32_t skinTotal = 0;
-                    int32_t skinFlip  = 0;
-                    for (int32_t i = 0; i < skinCount; i++) {
-                        void *elem = readArrayElem(skinArr, i);
-                        if (!elem) continue;
-                        int32_t mstSkinId = readI32(elem, 0x18);
-                        int32_t mstCharId = readI32(elem, 0x1C);
-                        uint8_t isAcquired = readU8(elem, 0x20);
-                        file_log([NSString stringWithFormat:
-                                  @"[UNLOCK-CHAR]   skin[%d] mstSkinId=%d mstCharId=%d isAcquired=%d",
-                                  i, mstSkinId, mstCharId, (int)isAcquired]);
-
-                        if (!isPlausibleMstId(mstSkinId)) continue;
-                        skinTotal++;
-
-                        if (!isAcquired) { writeU8(elem, 0x20, 1); skinFlip++; }
-                        if (readI32(elem, 0x30) <= 0) writeI32(elem, 0x30, 1);
-                    }
-                    file_log([NSString stringWithFormat:
-                              @"[UNLOCK-CHAR] skins total=%d unlocked=%d",
-                              skinTotal, skinFlip]);
-                } else {
-                    file_log(@"[UNLOCK-CHAR] updatedCharacterSkinList unreadable/empty");
-                }
-            }
-
-            // Stitch the persisted SelectCharacter override into the same
-            // lists. Uses the flag-move path (target is in the full-inventory
-            // list), so no duplicate ids are introduced and client-side
-            // validation stays happy.
-            {
-                void *charArr = NULL;
-                int32_t charCount = 0;
-                readRepeatedField(self, 0x28, &charArr, &charCount);
-                void *skinArr = NULL;
-                int32_t skinCount = 0;
-                readRepeatedField(self, 0x30, &skinArr, &skinCount);
-                kiou_applyPersistedSelectionToLists(charArr, charCount,
-                                                   skinArr, skinCount);
+                file_log([NSString stringWithFormat:
+                          @"[UNLOCK-CHAR] characters total=%d contract_unlocked=%d acquired_unlocked=%d intimacy_maxed=%d",
+                          charTotal, contractFlip, acquiredFlip, intimacyFlip]);
+            } else {
+                file_log(@"[UNLOCK-CHAR] updatedCharacterList unreadable/empty");
             }
         }
+
+        // Character skins (updatedCharacterSkinList_ @0x30) - itemUnlock only.
+        if (itemUnlock) {
+            void *skinArr = NULL;
+            int32_t skinCount = 0;
+            if (readRepeatedField(self, 0x30, &skinArr, &skinCount)) {
+                file_log([NSString stringWithFormat:
+                          @"[UNLOCK-CHAR] updatedCharacterSkinList count=%d", skinCount]);
+                int32_t skinTotal = 0;
+                int32_t skinFlip  = 0;
+                for (int32_t i = 0; i < skinCount; i++) {
+                    void *elem = readArrayElem(skinArr, i);
+                    if (!elem) continue;
+                    int32_t mstSkinId = readI32(elem, 0x18);
+                    int32_t mstCharId = readI32(elem, 0x1C);
+                    uint8_t isAcquired = readU8(elem, 0x20);
+                    file_log([NSString stringWithFormat:
+                              @"[UNLOCK-CHAR]   skin[%d] mstSkinId=%d mstCharId=%d isAcquired=%d",
+                              i, mstSkinId, mstCharId, (int)isAcquired]);
+
+                    if (!isPlausibleMstId(mstSkinId)) continue;
+                    skinTotal++;
+
+                    if (!isAcquired) { writeU8(elem, 0x20, 1); skinFlip++; }
+                    if (readI32(elem, 0x30) <= 0) writeI32(elem, 0x30, 1);
+                }
+                file_log([NSString stringWithFormat:
+                          @"[UNLOCK-CHAR] skins total=%d unlocked=%d",
+                          skinTotal, skinFlip]);
+            } else {
+                file_log(@"[UNLOCK-CHAR] updatedCharacterSkinList unreadable/empty");
+            }
+        }
+
+        // Persisted SelectCharacter stitch - flag-move path.
+        if (charBypass) {
+            void *charArr = NULL;
+            int32_t charCount = 0;
+            readRepeatedField(self, 0x28, &charArr, &charCount);
+            void *skinArr = NULL;
+            int32_t skinCount = 0;
+            readRepeatedField(self, 0x30, &skinArr, &skinCount);
+            kiou_applyPersistedSelectionToLists(charArr, charCount,
+                                                skinArr, skinCount);
+        }
+    done:;
     } @catch (NSException *e) {
         file_log([NSString stringWithFormat:
                   @"[SyncItemListReply] exception: %@", e]);
