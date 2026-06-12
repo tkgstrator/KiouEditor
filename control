@@ -1,0 +1,9 @@
+Package: work.tkgstrator.kioueditor
+Name: KiouEditor
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: Unlocks decoration supplies, characters, and skins in KIOU (Shogi) by editing the decoded SyncItemListReply in memory. Currency and paid items are never modified. For authorized testing only.
+Maintainer: NEVER KNOWS BEST
+Author: tkgstrator
+Section: Tweaks
+Depends: mobilesubstrate
