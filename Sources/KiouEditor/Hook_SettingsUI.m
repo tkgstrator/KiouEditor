@@ -22,7 +22,16 @@
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) UILabel     *depthValueLabel;
 @property (nonatomic, strong) UILabel     *skillValueLabel;
+@property (nonatomic, strong) UILabel     *hashValueLabel;
 @end
+
+// Mirror of the preset table in Persistence.m. Kept in this file (instead of
+// exposing the array through Internal.h) so the UI can render labels with
+// "<MB> MB" formatting locally; kiou_assistHashMB() is the source of truth
+// for hooks and is what gets sent to NativeSyncSession.SetHashSize.
+static const int32_t kHashPresetsMB[] = { 64, 128, 256, 512, 1024 };
+#define KE_HASH_PRESET_COUNT \
+    ((int32_t)(sizeof(kHashPresetsMB) / sizeof(kHashPresetsMB[0])))
 
 @implementation KEditorSettingsViewController
 
@@ -76,7 +85,8 @@
 
 #define KE_ENGINE_ROW_DEPTH 0
 #define KE_ENGINE_ROW_SKILL 1
-#define KE_ENGINE_ROW_COUNT 2
+#define KE_ENGINE_ROW_HASH  2
+#define KE_ENGINE_ROW_COUNT 3
 
 #define KE_ABOUT_ROW_REPO    0
 #define KE_ABOUT_ROW_TWITTER 1
@@ -106,7 +116,9 @@ static NSString *const kAboutTwitterURL = @"https://x.com/tkgling";
     }
     if (section == KE_SECTION_ENGINE) {
         return @"Depth feeds both the in-game evaluator and the hint-arrow "
-               @"path. Higher depth = stronger but heavier per move.";
+               @"path. Higher depth = stronger but heavier per move. Hash "
+               @"is the NNUE transposition-table size; the engine never "
+               @"sets it without this tweak.";
     }
     if (section == KE_SECTION_ABOUT) {
         return [NSString stringWithFormat:@"build %s", KIOU_EDITOR_COMMIT];
@@ -164,12 +176,12 @@ static NSString *const kAboutTwitterURL = @"https://x.com/tkgling";
                                          (int)kiou_assistDepth()];
             self.depthValueLabel = cell.detailTextLabel;
             stepper.minimumValue = 1;
-            stepper.maximumValue = 30;
+            stepper.maximumValue = 50;
             stepper.value = kiou_assistDepth();
             [stepper addTarget:self
                         action:@selector(onDepthChanged:)
               forControlEvents:UIControlEventValueChanged];
-        } else {
+        } else if (indexPath.row == KE_ENGINE_ROW_SKILL) {
             cell.textLabel.text = @"Skill Level";
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%d",
                                          (int)kiou_assistSkillLevel()];
@@ -179,6 +191,19 @@ static NSString *const kAboutTwitterURL = @"https://x.com/tkgling";
             stepper.value = kiou_assistSkillLevel();
             [stepper addTarget:self
                         action:@selector(onSkillChanged:)
+              forControlEvents:UIControlEventValueChanged];
+        } else { // KE_ENGINE_ROW_HASH
+            cell.textLabel.text = @"Hash";
+            int32_t idx = kiou_assistHashIndex();
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"%d MB",
+                                         (int)kHashPresetsMB[idx]];
+            self.hashValueLabel = cell.detailTextLabel;
+            stepper.minimumValue = 0;
+            stepper.maximumValue = KE_HASH_PRESET_COUNT - 1;
+            stepper.stepValue    = 1;
+            stepper.value        = idx;
+            [stepper addTarget:self
+                        action:@selector(onHashChanged:)
               forControlEvents:UIControlEventValueChanged];
         }
         cell.accessoryView = stepper;
@@ -241,6 +266,15 @@ static NSString *const kAboutTwitterURL = @"https://x.com/tkgling";
     kiou_setAssistSkillLevel(v);
     self.skillValueLabel.text = [NSString stringWithFormat:@"%d", v];
     file_log([NSString stringWithFormat:@"[SETTINGS] assist skill -> %d", v]);
+}
+
+- (void)onHashChanged:(UIStepper *)stepper {
+    int32_t idx = (int32_t)stepper.value;
+    kiou_setAssistHashIndex(idx);
+    int32_t mb = kHashPresetsMB[kiou_assistHashIndex()];
+    self.hashValueLabel.text = [NSString stringWithFormat:@"%d MB", mb];
+    file_log([NSString stringWithFormat:
+              @"[SETTINGS] assist hash -> %d MB (idx=%d)", mb, idx]);
 }
 
 @end

@@ -119,6 +119,18 @@ void install_AssistEnable_hook(uintptr_t unityBase);
 void install_FriendUnhide_hook(uintptr_t unityBase);
 void install_VoiceUnlock_hook(uintptr_t unityBase);
 
+// Sprite recon: walks uiButton -> gameObject.transform -> "Content" -> "Image"
+// child, calls GameObject.GetComponent("UnityEngine.UI.Image") on the leaf
+// GameObject, and logs the m_Sprite (field +0xD8) pointer. Tag distinguishes
+// title vs home callsites in the log. Implementation lives in
+// Hook_FriendUnhide.m next to the il2cpp bridge.
+void kioueditor_reconButtonImage(void *uiButton, const char *tag);
+
+// Once the title screen has captured its menu button's sprite, this swaps
+// it onto a freshly cloned home utility button's Image leaf. No-op if the
+// title sprite has not been captured yet.
+void kioueditor_applyTitleSpriteToClone(void *cloneGo);
+
 // ---------------------------------------------------------------------------
 // Select-character persistence shared with Hook_SyncItemList.
 //
@@ -173,12 +185,22 @@ void kiou_setFeatureEnabled(KiouFeature f, bool enabled);
 NSString *kiou_featureLabel(KiouFeature f);
 
 // ---------------------------------------------------------------------------
-// Engine tuning (BeginnerSupportEvaluator). Both have defined floors / caps
-// matching the in-game UI ranges - getters clamp before returning.
-//   depth      1 .. 30  (default 3)
+// Engine tuning (BeginnerSupportEvaluator). Getters clamp before returning.
+//   depth      1 .. 50  (default 16; retail BSE default is 5, the 50 cap is
+//                        only there to keep the UI stepper sane)
 //   skillLevel 1 .. 20  (default 20)
+//   hashIndex  0 .. 4   (default 1 = 128 MB; index into the preset table
+//                        {64, 128, 256, 512, 1024} MB)
+//
+// The hash size feeds NativeSyncSession.SetHashSize(int mb) — see
+// Hook_AssistTune.m for the call site. Rshogi's compiled-in default is small
+// (~16 MB) and no engine path sets it; the user-picked preset is applied
+// inside EnsureInitializedLocked once the native session is alive.
 // ---------------------------------------------------------------------------
 int32_t kiou_assistDepth(void);
 void    kiou_setAssistDepth(int32_t v);
 int32_t kiou_assistSkillLevel(void);
 void    kiou_setAssistSkillLevel(int32_t v);
+int32_t kiou_assistHashIndex(void);
+void    kiou_setAssistHashIndex(int32_t idx);
+int32_t kiou_assistHashMB(void);

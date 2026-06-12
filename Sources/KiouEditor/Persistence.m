@@ -53,6 +53,14 @@ void kiou_setFeatureEnabled(KiouFeature f, bool enabled) {
 
 static NSString *const kAssistDepthKey      = @"kiou_editor.assist_depth";
 static NSString *const kAssistSkillLevelKey = @"kiou_editor.assist_skill_level";
+static NSString *const kAssistHashIndexKey  = @"kiou_editor.assist_hash_idx";
+
+// Hash MB presets surfaced by the settings UI as a stepper. Index → MB.
+// Default index 1 = 128 MB; floor 64 MB beats Rshogi's compiled-in default
+// (~16 MB Stockfish lineage) without scaring older devices.
+static const int32_t kAssistHashPresetsMB[] = { 64, 128, 256, 512, 1024 };
+#define KIOU_ASSIST_HASH_PRESET_COUNT \
+    ((int32_t)(sizeof(kAssistHashPresetsMB) / sizeof(kAssistHashPresetsMB[0])))
 
 static int32_t clampInt(int32_t v, int32_t lo, int32_t hi) {
     if (v < lo) return lo;
@@ -62,13 +70,13 @@ static int32_t clampInt(int32_t v, int32_t lo, int32_t hi) {
 
 int32_t kiou_assistDepth(void) {
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
-    if ([defs objectForKey:kAssistDepthKey] == nil) return 3;
-    return clampInt((int32_t)[defs integerForKey:kAssistDepthKey], 1, 30);
+    if ([defs objectForKey:kAssistDepthKey] == nil) return 16;
+    return clampInt((int32_t)[defs integerForKey:kAssistDepthKey], 1, 50);
 }
 
 void kiou_setAssistDepth(int32_t v) {
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
-    [defs setInteger:clampInt(v, 1, 30) forKey:kAssistDepthKey];
+    [defs setInteger:clampInt(v, 1, 50) forKey:kAssistDepthKey];
     [defs synchronize];
 }
 
@@ -82,4 +90,22 @@ void kiou_setAssistSkillLevel(int32_t v) {
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     [defs setInteger:clampInt(v, 1, 20) forKey:kAssistSkillLevelKey];
     [defs synchronize];
+}
+
+int32_t kiou_assistHashIndex(void) {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    if ([defs objectForKey:kAssistHashIndexKey] == nil) return 1;
+    return clampInt((int32_t)[defs integerForKey:kAssistHashIndexKey],
+                    0, KIOU_ASSIST_HASH_PRESET_COUNT - 1);
+}
+
+void kiou_setAssistHashIndex(int32_t idx) {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    [defs setInteger:clampInt(idx, 0, KIOU_ASSIST_HASH_PRESET_COUNT - 1)
+              forKey:kAssistHashIndexKey];
+    [defs synchronize];
+}
+
+int32_t kiou_assistHashMB(void) {
+    return kAssistHashPresetsMB[kiou_assistHashIndex()];
 }
