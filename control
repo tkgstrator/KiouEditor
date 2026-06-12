@@ -1,8 +1,8 @@
 Package: work.tkgstrator.kioueditor
 Name: KiouEditor
-Version: 1.0.0
+Version: 1.1.0
 Architecture: iphoneos-arm64
-Description: Unlocks decoration supplies, characters, and skins in KIOU (Shogi) by editing the decoded SyncItemListReply in memory. Currency and paid items are never modified. For authorized testing only.
+Description: KIOU (Shogi) tweak. Unlocks decoration supplies / characters / skins by editing decoded protobuf replies in memory, forces premium kifu analysis / voice playback / friend menu on, and pins the Beginner Support NNUE evaluator (depth, skill, hash) to user-chosen values via an in-game settings sheet. Currency and paid items are never modified. For authorized testing only.
 Maintainer: NEVER KNOWS BEST
 Author: tkgstrator
 Section: Tweaks
