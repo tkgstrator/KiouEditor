@@ -111,3 +111,41 @@ static inline NSString *il2cppStringToNSString(const void *s) {
 void install_SyncItemList_hook(uintptr_t unityBase);
 void install_Collection_hook(uintptr_t unityBase);
 void install_Version_hook(uintptr_t unityBase);
+void install_SelectCharacter_hook(uintptr_t unityBase);
+void install_MatchingPlayer_hook(uintptr_t unityBase);
+void install_PremiumUnlock_hook(uintptr_t unityBase);
+void install_AssistTune_hook(uintptr_t unityBase);
+void install_AssistEnable_hook(uintptr_t unityBase);
+
+// ---------------------------------------------------------------------------
+// Select-character persistence shared with Hook_SyncItemList.
+//
+// The server only ever sees SAFE_ID (a known-owned skin) being equipped.
+// The user's intended skin id is kept on-device in NSUserDefaults and
+// stitched back into is_selected entries in every relevant reply.
+//
+// Returns 0 when nothing is persisted (use the server's value as-is).
+// ---------------------------------------------------------------------------
+
+#define KIOU_SAFE_SKIN_ID 1
+
+int32_t kiou_persistedSelection(void);
+void    kiou_setPersistedSelection(int32_t skinId);
+
+// Rewrite is_selected entries in the given character + character-skin
+// RepeatedField arrays so they advertise the persisted user choice instead
+// of whatever the server returned. Both arrays may be NULL/empty.
+//
+//   charArr / charCount  - updatedCharacterList     (CharacterStatus[],
+//                          mstCharacterId @0x18, isSelected @0x45)
+//   skinArr / skinCount  - updatedCharacterSkinList (CharacterSkinStatus[],
+//                          mstSkinId @0x18, mstCharacterId @0x1C,
+//                          isSelected @0x21)
+void kiou_applyPersistedSelectionToLists(void *charArr, int32_t charCount,
+                                        void *skinArr, int32_t skinCount);
+
+// Self user UUID (matching ShogiMatchingPlayerStatus.userId). Empty when
+// unset - callers should fall back to a heuristic. Caller owns no NSString
+// memory beyond standard ARC.
+NSString *kiou_selfUserId(void);
+void      kiou_setSelfUserId(NSString *uid);

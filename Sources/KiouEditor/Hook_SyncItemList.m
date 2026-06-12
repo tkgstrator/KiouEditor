@@ -172,6 +172,21 @@ static void hook_SyncItemListReply_merge(void *self, void *parseContext) {
                     file_log(@"[UNLOCK-CHAR] updatedCharacterSkinList unreadable/empty");
                 }
             }
+
+            // Stitch the persisted SelectCharacter override into the same
+            // lists. Uses the flag-move path (target is in the full-inventory
+            // list), so no duplicate ids are introduced and client-side
+            // validation stays happy.
+            {
+                void *charArr = NULL;
+                int32_t charCount = 0;
+                readRepeatedField(self, 0x28, &charArr, &charCount);
+                void *skinArr = NULL;
+                int32_t skinCount = 0;
+                readRepeatedField(self, 0x30, &skinArr, &skinCount);
+                kiou_applyPersistedSelectionToLists(charArr, charCount,
+                                                   skinArr, skinCount);
+            }
         }
     } @catch (NSException *e) {
         file_log([NSString stringWithFormat:

@@ -48,6 +48,11 @@ static void installUnityHooks(void) {
     install_SyncItemList_hook(unityBase);
     install_Collection_hook(unityBase);
     install_Version_hook(unityBase);
+    install_SelectCharacter_hook(unityBase);
+    install_MatchingPlayer_hook(unityBase);
+    install_PremiumUnlock_hook(unityBase);
+    install_AssistTune_hook(unityBase);
+    install_AssistEnable_hook(unityBase);
 
     g_unityHooked = YES;
     file_log(@"=== All UnityFramework hooks installed ===");
