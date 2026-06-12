@@ -10,10 +10,12 @@
 //   SupplyStatus: +0x20 mstSupplyId_(i32), +0x30 isAcquired_(bool), +0x34 acquiredCount_(i32)
 //
 //   self + 0x28 = updatedCharacterList_ (RepeatedField<CharacterStatus>)
-//   CharacterStatus: +0x18 mstCharacterId_(i32), +0x20 isContract_(bool),
-//      +0x30 isAcquired_(bool), +0x40 acquiredCount_(i32),
-//      +0x46 isContractAvailable_(bool)
-//      (NEVER touch: +0x44 isFavorite_, +0x45 isSelected_, intimacy fields)
+//   CharacterStatus: +0x18 mstCharacterId_(i32), +0x1C intimacyLevel_(i32),
+//      +0x20 isContract_(bool), +0x30 isAcquired_(bool),
+//      +0x40 acquiredCount_(i32), +0x46 isContractAvailable_(bool),
+//      +0x47 isIntimacyAtMax_(bool)
+//      (NEVER touch: +0x44 isFavorite_, +0x45 isSelected_,
+//       intimacy{Total,NextLevel,PointInLevel,PointToNextLevel,ProgressRate})
 //
 //   self + 0x30 = updatedCharacterSkinList_ (RepeatedField<CharacterSkinStatus>)
 //   CharacterSkinStatus: +0x18 mstCharacterSkinId_(i32), +0x1C mstCharacterId_(i32),
@@ -114,15 +116,18 @@ static void hook_SyncItemListReply_merge(void *self, void *parseContext) {
                     int32_t charTotal     = 0;
                     int32_t contractFlip  = 0;
                     int32_t acquiredFlip  = 0;
+                    int32_t intimacyFlip  = 0;
                     for (int32_t i = 0; i < charCount; i++) {
                         void *elem = readArrayElem(charArr, i);
                         if (!elem) continue;
                         int32_t mstCharacterId = readI32(elem, 0x18);
+                        int32_t intimacyLevel  = readI32(elem, 0x1C);
                         uint8_t isContract     = readU8(elem, 0x20);
                         uint8_t isAcquired     = readU8(elem, 0x30);
                         file_log([NSString stringWithFormat:
-                                  @"[UNLOCK-CHAR]   [%d] mstCharacterId=%d isContract=%d isAcquired=%d",
-                                  i, mstCharacterId, (int)isContract, (int)isAcquired]);
+                                  @"[UNLOCK-CHAR]   [%d] mstCharacterId=%d intimacyLevel=%d isContract=%d isAcquired=%d",
+                                  i, mstCharacterId, intimacyLevel,
+                                  (int)isContract, (int)isAcquired]);
 
                         if (!isPlausibleMstId(mstCharacterId)) continue;
                         charTotal++;
@@ -131,10 +136,18 @@ static void hook_SyncItemListReply_merge(void *self, void *parseContext) {
                         if (!isAcquired) { writeU8(elem, 0x30, 1); acquiredFlip++; }
                         writeU8(elem, 0x46, 1);
                         if (readI32(elem, 0x40) <= 0) writeI32(elem, 0x40, 1);
+
+                        // Pin intimacy to max so CharacterVoicePlayer is built
+                        // with intimacyLevel=5 and SatisfiesRule lets every
+                        // Level1..Level5 + Complete cue through naturally.
+                        // VoiceRuleType ranges Level1=3..Level5=7 (TDI 22258),
+                        // so the in-game cap is 5.
+                        if (intimacyLevel < 5) { writeI32(elem, 0x1C, 5); intimacyFlip++; }
+                        writeU8(elem, 0x47, 1);
                     }
                     file_log([NSString stringWithFormat:
-                              @"[UNLOCK-CHAR] characters total=%d contract_unlocked=%d acquired_unlocked=%d",
-                              charTotal, contractFlip, acquiredFlip]);
+                              @"[UNLOCK-CHAR] characters total=%d contract_unlocked=%d acquired_unlocked=%d intimacy_maxed=%d",
+                              charTotal, contractFlip, acquiredFlip, intimacyFlip]);
                 } else {
                     file_log(@"[UNLOCK-CHAR] updatedCharacterList unreadable/empty");
                 }

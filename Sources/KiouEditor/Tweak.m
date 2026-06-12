@@ -54,6 +54,7 @@ static void installUnityHooks(void) {
     install_AssistTune_hook(unityBase);
     install_AssistEnable_hook(unityBase);
     install_FriendUnhide_hook(unityBase);
+    install_VoiceUnlock_hook(unityBase);
 
     g_unityHooked = YES;
     file_log(@"=== All UnityFramework hooks installed ===");

@@ -117,6 +117,7 @@ void install_PremiumUnlock_hook(uintptr_t unityBase);
 void install_AssistTune_hook(uintptr_t unityBase);
 void install_AssistEnable_hook(uintptr_t unityBase);
 void install_FriendUnhide_hook(uintptr_t unityBase);
+void install_VoiceUnlock_hook(uintptr_t unityBase);
 
 // ---------------------------------------------------------------------------
 // Select-character persistence shared with Hook_SyncItemList.
