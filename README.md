@@ -21,96 +21,84 @@
 
 ---
 
-Kiou Editor is the most complete client-side modification suite shipped for
-**KIOU** (`com.neconome.shogi`, a Unity 6 + il2cpp shogi app), built for
-**authorized penetration testing only**. Every restriction the retail client
-politely declines to lift — cosmetic ownership, premium-only kifu analysis,
-locked voice lines, the in-match Beginner Support evaluator's training
-wheels — falls under a single in-app settings sheet you can flip on or off
-without restarting the app, all powered by inline `MSHookFunction` patches
-at `UnityFramework` base + RVA. No replacement binary, no jailbreak required
-for sideload, no compromise on stability: just a dylib that loads with the
-app and rewrites decoded protobuf objects on their way to the UI.
+Kiou Editor is the most complete client-side customization suite shipped for
+**KIOU**, built for **authorized penetration testing only**. Every restriction
+the retail client politely declines to lift — cosmetic ownership, premium-only
+kifu analysis, locked voice lines, the in-match Beginner Support engine's
+training wheels — falls under a single in-app settings sheet you can flip on
+or off without restarting the app. No replacement binary, no jailbreak required
+for sideload, no compromise on stability.
 
 ### Client-side only
 
-Every modification Kiou Editor makes happens **inside the app process, after
-the reply has already arrived from the server**. The tweak never:
+Every modification Kiou Editor makes happens **inside the app on your device,
+after the server has already replied**. The tweak never:
 
 - crafts or sends a request to the KIOU backend,
-- replays or replays-with-edits a captured request,
+- replays a captured request, with or without edits,
 - proxies, MITMs, or otherwise sits on the network path,
 - writes to currency, paid items, or any monetised entity.
 
 What the server stores about your account is untouched — flipping every
-toggle off and relaunching returns the app to a fully vanilla state. Tampered
-fields (item ownership, premium flag, hint-arrow depth, …) only live in this
-client's RAM for the lifetime of the process.
-
-> Frida spawn-hooking crashes on the app's anti-debug detection. Loading as a
-> bundled dylib at launch avoids the `ptrace` trace path, which is why this is
-> packaged as a tweak rather than a Frida script.
+toggle off and relaunching returns the app to a fully vanilla state.
 
 ## Features
 
 Each row below is its own switch in the settings sheet. Toggles default to
-**on** for a fresh install; flipping one off makes that hook fall through to
-the original method on the next call.
+**on** for a fresh install; flipping one off restores the retail behaviour
+for that feature on the next match / launch.
 
 | Toggle | What it does |
 |---|---|
-| **Item Unlock** | Rewrites the decoded `SyncItemListReply` so decoration-band supplies (`isAcquired = 1`, `acquiredCount ≥ 1`), characters, and character skins appear owned. Currency / character-purchase / skin-currency entries are left alone. |
-| **Bypass Character** | Outgoing `SelectCharacterAsync` is rewritten to the safe skin id; the user's chosen skin is kept on-device in `NSUserDefaults` and stitched back into every reply that advertises `is_selected`. Server only ever sees a legal request. |
-| **Premium User** | Forces `isPremiumUser = true` across the kifu-detail flow (`KifuDetailModel.IsPremiumUser`, `GetShogiHistoryDetailListReply.InternalMergeFrom`, kifu-detail popup) so post-match analysis features unlock. |
-| **Beginner Support** | `ResolvedBeginnerSupport.get_Enabled` is pinned to `true` (and `get_Depth` returns the user-set depth) so the hint arrow / best-move overlay shows up in modes where retail hides it. Also fans out into the match-room player status so the assist is honored end-to-end. |
-| **Always Hint Arrow** | Pins the in-match hint arrow on regardless of retail's mode-by-mode gating, and routes the in-game `BeginnerSupportEvaluator` through the tunables below. |
-| **Voice Unlock** | `CharacterVoicePlayer.SatisfiesRule` is forced `true` so locked voice cues play, and per-character intimacy in the sync reply is pinned to the unlock threshold so the UI doesn't grey out the lines. |
+| **Item Unlock** | Decoration supplies, characters, and character skins all show as owned. Currency and paid items stay vanilla. |
+| **Bypass Character** | Equip any character or skin you want without owning it. The server only ever sees a legal "safe" skin being equipped; your real choice is remembered on-device and shown everywhere the UI displays "currently equipped". |
+| **Premium User** | Unlocks the full post-match kifu analysis flow without a premium subscription. |
+| **Beginner Support** | Turns on the in-match hint arrow / best-move overlay in every mode, including ones where retail hides it (ranked, etc.). |
+| **Always Hint Arrow** | Keeps the hint arrow visible at all times during a match, and routes the in-game engine through the [Engine tuning](#engine-tuning) sliders. Pair with **Beginner Support** for the strongest assist. |
+| **Voice Unlock** | Every character voice line plays regardless of intimacy gating. |
 
 ## Engine tuning
 
-`BeginnerSupportEvaluator` is the NNUE-backed engine that drives the in-match
-hint arrow, best-move suggestions and formation evaluation. Retail ships it
-with `_analysisDepth = 5` and never calls `NativeSyncSession.SetHashSize`, so
-the engine runs on Rshogi's compiled-in default hash (~16 MB) — visibly weak,
-misses tactical lines. Kiou Editor exposes three knobs that override the
-ScriptableObject defaults and pin the live Rshogi session:
+The in-match hint arrow and best-move suggestions come from a built-in NNUE
+engine that ships configured very conservatively. Kiou Editor exposes three
+sliders to make it actually strong:
 
-| Knob | Range | Default | How it lands |
+| Knob | Range | Default | Effect |
 |---|---|---|---|
-| `Depth` | 1 – 36 | **16** | Hook on `BeginnerSupportEvaluator..ctor` overwrites `+0x18 _analysisDepth` after the orig runs. 36 is the practical NNUE ceiling that returns in a reasonable wall-clock; depth 5 was the retail value. |
-| `Skill Level` | 1 – 20 | **20** | Same ctor hook overwrites `+0x28 _engineSkillLevel`. Retail is already 20; we just pin it. |
-| `Hash` | {64, 128, 256, 512, 1024} MB | **128 MB** | Hook on `BeginnerSupportEvaluator.EnsureInitializedLocked` calls `NativeSyncSession.SetHashSize(MB)` via direct ABI on the live Rshogi session — no retail path does. Pick whatever fits your device's free RAM; 1024 MB is realistic on iPhone 12+. |
+| `Depth` | 1 – 36 | **16** | How many plies the engine searches. Retail uses 5 (visibly weak). Higher = stronger but each evaluation takes longer. 36 is the practical ceiling — beyond that the engine never returns in time. |
+| `Skill Level` | 1 – 20 | **20** | Engine personality strength. 20 is "no handicap, play the best move". Lower values intentionally weaken it. |
+| `Hash` | 64 / 128 / 256 / 512 / 1024 MB | **128 MB** | Transposition-table size for the engine. Retail never configures this and runs on a tiny internal default. More hash = stronger play, but uses that much device RAM. 1024 MB is comfortable on iPhone 12 and newer; drop to 64–256 MB on older devices. |
 
-The depth / skill writes ride on the **Always Hint Arrow** toggle: turn the
-toggle off and the evaluator falls back to its ScriptableObject defaults on
-the next match.
+The depth / skill / hash values only take effect while **Always Hint Arrow**
+is on. Turn that switch off and the engine falls back to retail defaults
+without restarting the app.
 
 ### Settings UI
 
-A UIKit gear button (`Hook_CloneOverlay.m`) is drawn above the Unity surface
-once the home screen is up; tapping it presents the settings sheet from
-`Hook_SettingsUI.m`. The sheet surfaces:
+A floating gear button is drawn on the home screen once the app finishes
+launching. Tap it to open the settings sheet, which surfaces:
 
 - **Features** — one switch per row in the [Features](#features) table.
-- **Engine** — the three steppers from [Engine tuning](#engine-tuning).
+- **Engine** — the three sliders from [Engine tuning](#engine-tuning).
 - **About** — repo link, X handle, and the embedded build commit.
 
-All values persist in `NSUserDefaults` under the `kiou_editor.*` namespace.
+All values persist between launches.
 
-## Scope (strict)
+## Compatibility
 
-- **Client-side only.** The tweak hooks methods on decoded protobuf objects
-  *after* they arrive from the server. No request is ever crafted, replayed,
-  proxied, or otherwise sent — outbound traffic is byte-for-byte identical
-  to a vanilla install.
-- **Observation + ownership tamper only.** No network traffic is altered.
-- `SyncItemListReply`: decoration-band supplies are unlocked in place
-  (`isAcquired -> 1`, `acquiredCount >= 1`). Characters and character skins are
-  flagged owned. Currency / character-purchase / skin currency are **never**
-  written.
-- `UpdateCollectionPresetReply`: observation logging only (no writes).
-- Every pointer read is NULL/range-checked; writes are band-restricted and
-  reentrancy-guarded. The hooks must never crash the app.
+This build targets:
+
+| | |
+|---|---|
+| **KIOU app version** | `1.0.1` (`CFBundleVersion` 11) |
+| **iOS** | 15.0 – 16.5, arm64, rootless |
+
+All hooks are pinned to RVAs from this exact KIOU build's `UnityFramework`
+binary. After a KIOU update the RVAs will drift and the tweak will silently
+no-op (or, worst case, crash on a method whose signature changed).
+**Don't install this dylib against a KIOU version other than the one above
+without re-deriving every RVA first** — the procedure is documented in
+[`docs/porting.md`](docs/porting.md).
 
 ## Requirements
 
@@ -150,19 +138,14 @@ Sideloadly bundles automatically as ElleKit. To install:
 3. Add `packages/jailed/KiouEditor.dylib` under **Inject dylib**.
 4. Sign with your Apple ID / certificate and install.
 
-## Logs
+## Documentation
 
-Kiou Editor writes to both an app-sandbox temp file and a root-readable path,
-and emits `os_log` under the `com.neconome.shogi.kioueditor` subsystem.
+Developer-facing notes live under [`docs/`](docs/):
 
-- Jailbroken: `/var/tmp/kiou_editor.log`
-- Jailed: app sandbox `NSTemporaryDirectory()/kiou_editor.log`, or view the
-  `os_log` stream via Console.app / `idevicesyslog`.
-
-Look for `=== KiouEditor loaded ===`, `UnityFramework base=...`, and the
-`[UNLOCK]` / `[UNLOCK-CHAR]` summary lines to confirm the hooks fired.
-
-## Notes
-
-RVAs are specific to the analyzed KIOU build and will need to be re-derived
-against `UnityFramework` after an app update.
+- [`docs/hooks.md`](docs/hooks.md) — per-toggle implementation notes: RVAs,
+  decoded protobuf field offsets, override values, gating logic.
+- [`docs/internals.md`](docs/internals.md) — bootstrap, il2cpp bridging,
+  settings persistence, logging, anti-debug context.
+- [`docs/porting.md`](docs/porting.md) — what to do when a new KIOU build
+  ships: re-dumping `UnityFramework`, finding each RVA by anchor, validating
+  field offsets, and the sanity-check log lines to read on first boot.

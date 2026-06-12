@@ -29,11 +29,18 @@ typedef void *(*il2cpp_string_new_t)(const char *s);
 static TitleSceneMoveNext_t orig_TitleScene_MoveNext = NULL;
 static il2cpp_string_new_t  p_il2cpp_string_new = NULL;
 
+static bool g_titleSpriteReconDone = false;
+
 static void hook_TitleScene_MoveNext(void *sm) {
     if (ptrLooksValid(sm) && p_il2cpp_string_new) {
         @try {
             void *titleScene = readPtr(sm, 0x20);
             if (titleScene) {
+                if (!g_titleSpriteReconDone) {
+                    void *titleMenuBtn = readPtr(titleScene, 0x30);
+                    kioueditor_reconButtonImage(titleMenuBtn, "title-menu");
+                    g_titleSpriteReconDone = true;
+                }
                 void *origFormatStr = readPtr(titleScene, 0x40);
                 NSString *origFormat = il2cppStringToNSString(origFormatStr);
                 if (origFormat.length > 0) {
