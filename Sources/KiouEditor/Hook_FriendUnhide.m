@@ -95,14 +95,17 @@ static void *g_method_Tf_get_childCount  = NULL;  // Transform.get_childCount
 static void *g_method_Tf_GetChild        = NULL;  // Transform.GetChild(int)
 static void *g_method_Obj_get_name       = NULL;  // UnityEngine.Object.get_name
 
-// Once-per-app-session guard so a HomeUtilityPresenter re-creation does not
-// pile up duplicate clones on the home screen.
-static bool g_cloneCreated = false;
+// HomeUtilityView pointer the clone is currently parented under. Home -> Match
+// -> Home etc. tears down the view + clone; HomeUtilityPresenter.ctor then
+// fires again with a freshly allocated view. Comparing view pointers lets us
+// re-clone exactly once per new view without piling up clones on repeat
+// ctor fires for the same view.
+static void *g_lastClonedView = NULL;
 
-// GameObject pointer of the menu-button clone. The clone's own UIButtonBase
-// component is not tracked directly - instead the OnPointerClick hook calls
-// Component.get_gameObject(self) and compares against this pointer. Set
-// once Phase 2a's Instantiate succeeds, read by hook_UIBtn_OnPointerClick.
+// GameObject pointer of the current menu-button clone. The clone's own
+// UIButtonBase component is not tracked directly - the OnPointerClick hook
+// calls Component.get_gameObject(self) and compares against this pointer.
+// Updated every time we re-clone after a view swap.
 static void *g_cloneGo = NULL;
 
 // One-time guard for the Instantiate-method enumeration recon (Phase 2a
@@ -565,10 +568,13 @@ static void hook_HUP_ctor(void *self, void *view) {
                   @"[HOME] HomeUtilityView@%p buttons: menu=%p gift=%p friend=%p",
                   view, menuBtn, giftBtn, friendBtn]);
 
-        if (!kiou_featureEnabled(KIOU_FEATURE_FRIEND_UNHIDE)) {
-            return;
-        }
-        if (ptrLooksValid(friendBtn)) {
+        // FRIEND_UNHIDE only gates the SetActive on the friend button itself.
+        // The settings clone below is created unconditionally so the user
+        // can always re-toggle the flag from the UI - making the clone
+        // depend on this flag would lock the user out (no clone -> no
+        // settings -> no way to flip the flag back on).
+        if (kiou_featureEnabled(KIOU_FEATURE_FRIEND_UNHIDE)
+            && ptrLooksValid(friendBtn)) {
             void *friendGo = gameObjectOf(friendBtn);
             if (ptrLooksValid(friendGo)) {
                 file_log([NSString stringWithFormat:
@@ -590,15 +596,17 @@ static void hook_HUP_ctor(void *self, void *view) {
         (void)logInstantiateMethods;
         (void)instantiateCloneNonGeneric;
         (void)instantiateCloneWithParent;
-        if (!g_cloneCreated && ptrLooksValid(menuBtn) && ptrLooksValid(friendBtn)) {
+        if (view != g_lastClonedView
+            && ptrLooksValid(menuBtn) && ptrLooksValid(friendBtn)) {
             file_log([NSString stringWithFormat:
-                      @"[HOME] presenter.ctor on main thread=%d",
-                      (int)[NSThread isMainThread]]);
+                      @"[HOME] presenter.ctor on main thread=%d (view %p -> %p)",
+                      (int)[NSThread isMainThread],
+                      g_lastClonedView, view]);
             void *menuGo = gameObjectOf(menuBtn);
             if (ptrLooksValid(menuGo)) {
                 void *cloneGo = instantiateCloneDirect(menuGo);
                 if (ptrLooksValid(cloneGo)) {
-                    g_cloneCreated = true;
+                    g_lastClonedView = view;
                     g_cloneGo = cloneGo;
                     file_log([NSString stringWithFormat:
                               @"[HOME] direct: clone gameObject=%p", cloneGo]);
