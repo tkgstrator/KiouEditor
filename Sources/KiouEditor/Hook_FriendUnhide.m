@@ -33,6 +33,12 @@
 
 typedef void *(*il2cpp_runtime_invoke_t)(void *method, void *obj, void **params, void **exc);
 typedef void *(*il2cpp_class_from_name_t)(void *image, const char *ns, const char *name);
+typedef void *(*il2cpp_string_new_t)(const char *s);
+static il2cpp_string_new_t p_il2cpp_string_new = NULL;
+
+// UnityFramework load address - captured at install. Used to direct-call
+// methods by RVA (GameObject.GetComponent(string) at 0x6BCA6AC).
+static uintptr_t g_unityBaseAddr = 0;
 typedef void *(*il2cpp_class_get_method_from_name_t)(void *klass, const char *name, int argc);
 typedef void *(*il2cpp_object_get_class_t)(void *obj);
 typedef void *(*il2cpp_class_get_parent_t)(void *klass);
@@ -95,18 +101,22 @@ static void *g_method_Tf_get_childCount  = NULL;  // Transform.get_childCount
 static void *g_method_Tf_GetChild        = NULL;  // Transform.GetChild(int)
 static void *g_method_Obj_get_name       = NULL;  // UnityEngine.Object.get_name
 
-// HomeUtilityView pointer the clone is currently parented under. Home -> Match
-// -> Home etc. tears down the view + clone; HomeUtilityPresenter.ctor then
-// fires again with a freshly allocated view. Comparing view pointers lets us
-// re-clone exactly once per new view without piling up clones on repeat
-// ctor fires for the same view.
+// HomeUtilityView pointer the clone is currently parented under. Kept for
+// historical reasons - the menu-button clone path is disabled in favor of
+// repurposing the existing friend button as the settings entry point.
 static void *g_lastClonedView = NULL;
 
-// GameObject pointer of the current menu-button clone. The clone's own
-// UIButtonBase component is not tracked directly - the OnPointerClick hook
-// calls Component.get_gameObject(self) and compares against this pointer.
-// Updated every time we re-clone after a view swap.
+// GameObject pointer of the current menu-button clone (unused now that the
+// clone code path is disabled). Preserved so the dead helpers in this file
+// still compile.
 static void *g_cloneGo = NULL;
+
+// Friend button GameObject. The retail friend button has no live wiring
+// (taps trigger a "Coming soon" popup), so we redirect its OnPointerClick
+// to the KiouEditor settings sheet instead. Captured every time the
+// HomeUtilityPresenter ctor fires, so it stays current across scene
+// re-entries.
+static void *g_friendGo = NULL;
 
 // One-time guard for the Instantiate-method enumeration recon (Phase 2a
 // debug). After the first fire we know which method handle is the
@@ -311,6 +321,370 @@ static void dumpHierarchy(void *tfObj, int depth, int maxDepth) {
     for (int32_t i = 0; i < cc; i++) {
         void *child = transformGetChild(tfObj, i);
         dumpHierarchy(child, depth + 1, maxDepth);
+    }
+}
+
+// Find the immediate child Transform whose Object.get_name matches.
+static void *transformChildByName(void *parentTf, const char *targetName) {
+    if (!ptrLooksValid(parentTf) || !targetName) return NULL;
+    int32_t cc = transformChildCount(parentTf);
+    NSString *needle = [NSString stringWithUTF8String:targetName];
+    for (int32_t i = 0; i < cc; i++) {
+        void *child = transformGetChild(parentTf, i);
+        if (!ptrLooksValid(child)) continue;
+        NSString *name = objectName(child);
+        if ([name isEqualToString:needle]) return child;
+    }
+    return NULL;
+}
+
+// GameObject.GetComponent(string type) at UnityFramework + 0x6BCA6AC. The
+// codegen wrapper here is a thin FreeFunction marshal to native
+// Scripting::GetScriptingWrapperOfComponentOfGameObject - probably ignores
+// MethodInfo* so passing NULL is OK. If it crashes we'll revisit with proper
+// klass-walked MethodInfo* resolution.
+#define RVA_GO_GETCOMPONENT_STRING 0x6BCA6AC
+
+typedef void *(*GO_GetComponent_string_directABI_t)(void *thisGo, void *typeStr, void *methodInfo);
+
+static void *componentByTypeName(void *gameObject, const char *typeName) {
+    if (!ptrLooksValid(gameObject) || !typeName) return NULL;
+    if (!p_il2cpp_string_new || g_unityBaseAddr == 0) return NULL;
+    void *typeStr = p_il2cpp_string_new(typeName);
+    if (!typeStr) return NULL;
+    GO_GetComponent_string_directABI_t fn =
+        (GO_GetComponent_string_directABI_t)(g_unityBaseAddr + RVA_GO_GETCOMPONENT_STRING);
+    return fn(gameObject, typeStr, NULL);
+}
+
+// Walks a UIButton-shaped hierarchy for the leaf that owns the icon sprite.
+// HomeUtilityButton* puts the icon at Content/Image while TitleScene's
+// _titleMenuButton uses Content/IconImage. Try both.
+static void *findIconImageTransform(void *btnTf) {
+    if (!ptrLooksValid(btnTf)) return NULL;
+    void *contentTf = transformChildByName(btnTf, "Content");
+    if (!ptrLooksValid(contentTf)) return NULL;
+    void *imageTf = transformChildByName(contentTf, "Image");
+    if (!ptrLooksValid(imageTf)) {
+        imageTf = transformChildByName(contentTf, "IconImage");
+    }
+    return imageTf;
+}
+
+// Sprite captured from the TitleScene._titleMenuButton on the first title
+// MoveNext fire. NULL until then (and during fresh launches that drop the
+// user directly into a non-title screen).
+static void *g_titleMenuSprite = NULL;
+
+
+// UnityEngine.UI.Image.set_sprite resolved off the live Image component's
+// klass once we have one; reused per clone Image swap. set_sprite has only
+// one overload so class_get_method_from_name is unambiguous here.
+typedef void (*Image_set_sprite_directABI_t)(void *thisImg, void *sprite, void *methodInfo);
+static void *g_method_Image_set_sprite = NULL;
+
+static bool swapImageSpriteOnGo(void *imageHostGo, void *newSprite, const char *tag) {
+    if (!ptrLooksValid(imageHostGo) || !ptrLooksValid(newSprite)) return false;
+    void *imageComp = componentByTypeName(imageHostGo, "UnityEngine.UI.Image");
+    if (!ptrLooksValid(imageComp)) {
+        file_log([NSString stringWithFormat:
+                  @"[SPRITE-SWAP %s] no Image component on go=%p", tag, imageHostGo]);
+        return false;
+    }
+    if (!g_method_Image_set_sprite) {
+        if (!p_il2cpp_object_get_class || !p_il2cpp_class_get_method_from_name) return false;
+        void *klass = p_il2cpp_object_get_class(imageComp);
+        if (!klass) return false;
+        g_method_Image_set_sprite =
+            p_il2cpp_class_get_method_from_name(klass, "set_sprite", 1);
+        file_log([NSString stringWithFormat:
+                  @"[SPRITE-SWAP %s] cached Image.set_sprite method=%p (klass=%p)",
+                  tag, g_method_Image_set_sprite, klass]);
+    }
+    if (!g_method_Image_set_sprite) return false;
+    void *methodPtr = *(void **)g_method_Image_set_sprite;
+    if (!methodPtr) {
+        file_log([NSString stringWithFormat:
+                  @"[SPRITE-SWAP %s] set_sprite methodPointer is NULL", tag]);
+        return false;
+    }
+    file_log([NSString stringWithFormat:
+              @"[SPRITE-SWAP %s] applying sprite=%p to imageComp=%p (was m_Sprite=%p)",
+              tag, newSprite, imageComp, readPtr(imageComp, 0xD8)]);
+    ((Image_set_sprite_directABI_t)methodPtr)(imageComp, newSprite, g_method_Image_set_sprite);
+    return true;
+}
+
+// Read the m_Sprite name on the clone's Image so we can tell whether the
+// "メニュー" label is baked into the sprite (sprite name suggests a
+// combined icon+text texture) or actually rendered separately somewhere.
+static void reconSpriteName(void *cloneTf) {
+    if (!ptrLooksValid(cloneTf)) return;
+    void *contentTf = transformChildByName(cloneTf, "Content");
+    if (!ptrLooksValid(contentTf)) return;
+    void *imageTf = transformChildByName(contentTf, "Image");
+    if (!ptrLooksValid(imageTf)) imageTf = transformChildByName(contentTf, "IconImage");
+    if (!ptrLooksValid(imageTf)) return;
+    void *imageGo = gameObjectOf(imageTf);
+    if (!ptrLooksValid(imageGo)) return;
+    void *imageComp = componentByTypeName(imageGo, "UnityEngine.UI.Image");
+    if (!ptrLooksValid(imageComp)) return;
+    void *sprite = readPtr(imageComp, 0xD8);
+    if (!ptrLooksValid(sprite)) return;
+    NSString *name = objectName(sprite);
+    file_log([NSString stringWithFormat:
+              @"[SPRITE-NAME] clone Image.m_Sprite=%p name=\"%@\"",
+              sprite, name ?: @"<null>"]);
+}
+
+// Plain-C mirrors of Unity's value types. Vector3/Vector2 are HFAs on
+// arm64 (3/2 contiguous floats) so they ride v0..v2 / v0..v1 on return,
+// which clang matches when the struct is declared this way.
+typedef struct { float x, y, z; } UVec3;
+typedef struct { float x, y; } UVec2;
+
+typedef UVec3 (*Tf_get_position_HFA_t)(void *self, void *methodInfo);
+typedef UVec2 (*Rt_get_sizeDelta_HFA_t)(void *self, void *methodInfo);
+
+static void *g_method_Tf_get_position  = NULL;
+static void *g_method_Rt_get_sizeDelta = NULL;
+
+// RectTransformUtility.WorldToScreenPoint(Camera cam, Vector3 worldPoint)
+// at UnityFramework + 0x6F20040. Static, takes a null camera for
+// ScreenSpaceOverlay canvases and returns the screen pixel position with
+// bottom-left origin. Direct call with NULL methodInfo - same pattern as
+// GameObject.GetComponent(string) which we proved out earlier.
+#define RVA_RTU_WORLD_TO_SCREEN 0x6F20040
+typedef UVec2 (*RtU_WorldToScreenPoint_t)(void *cam, UVec3 worldPoint, void *methodInfo);
+
+static UVec2 unityWorldToScreen(UVec3 worldPoint) {
+    UVec2 zero = {0};
+    if (g_unityBaseAddr == 0) return zero;
+    RtU_WorldToScreenPoint_t fn =
+        (RtU_WorldToScreenPoint_t)(g_unityBaseAddr + RVA_RTU_WORLD_TO_SCREEN);
+    return fn(NULL, worldPoint, NULL);
+}
+
+// Resolve via class_get_method_from_name so we pass the real MethodInfo*
+// trailing arg the codegen wrapper expects. Direct RVA + NULL methodInfo
+// crashed inside the IL2CPP P/Invoke marshalling for the value-type
+// returns, so we let il2cpp hand us the proper handle.
+static bool readCloneScreenRect(void *cloneTf,
+                                UVec3 *outPos, UVec2 *outSize) {
+    if (!ptrLooksValid(cloneTf)) return false;
+    if (!p_il2cpp_object_get_class || !p_il2cpp_class_get_method_from_name) return false;
+
+    if (!g_method_Tf_get_position || !g_method_Rt_get_sizeDelta) {
+        void *klass = p_il2cpp_object_get_class(cloneTf);
+        if (!klass) return false;
+        if (!g_method_Tf_get_position) {
+            g_method_Tf_get_position =
+                p_il2cpp_class_get_method_from_name(klass, "get_position", 0);
+        }
+        if (!g_method_Rt_get_sizeDelta) {
+            g_method_Rt_get_sizeDelta =
+                p_il2cpp_class_get_method_from_name(klass, "get_sizeDelta", 0);
+        }
+        file_log([NSString stringWithFormat:
+                  @"[CLONE-RECT] cached get_position=%p get_sizeDelta=%p (klass=%p)",
+                  g_method_Tf_get_position, g_method_Rt_get_sizeDelta, klass]);
+    }
+    if (!g_method_Tf_get_position || !g_method_Rt_get_sizeDelta) return false;
+
+    void *posPtr = *(void **)g_method_Tf_get_position;
+    void *sizePtr = *(void **)g_method_Rt_get_sizeDelta;
+    if (!posPtr || !sizePtr) return false;
+
+    *outPos = ((Tf_get_position_HFA_t)posPtr)(cloneTf, g_method_Tf_get_position);
+    *outSize = ((Rt_get_sizeDelta_HFA_t)sizePtr)(cloneTf, g_method_Rt_get_sizeDelta);
+    file_log([NSString stringWithFormat:
+              @"[CLONE-RECT] pos=(%g,%g,%g) sizeDelta=(%g,%g)",
+              outPos->x, outPos->y, outPos->z, outSize->x, outSize->y]);
+    return true;
+}
+
+// Hide the clone's Image by zeroing its m_Color alpha and calling
+// SetAllDirty so the canvas rebuild picks up the new color. Keeps the
+// raycast target so the OnPointerClick hook still sees taps; the actual
+// visual is rendered by a UIKit overlay above the Unity layer.
+typedef void (*Graphic_SetAllDirty_t)(void *self, void *methodInfo);
+static void *g_method_Graphic_SetAllDirty = NULL;
+
+static void hideCloneImage(void *cloneTf) {
+    if (!ptrLooksValid(cloneTf)) return;
+    void *contentTf = transformChildByName(cloneTf, "Content");
+    if (!ptrLooksValid(contentTf)) return;
+    void *imageTf = transformChildByName(contentTf, "Image");
+    if (!ptrLooksValid(imageTf)) imageTf = transformChildByName(contentTf, "IconImage");
+    if (!ptrLooksValid(imageTf)) return;
+    void *imageGo = gameObjectOf(imageTf);
+    if (!ptrLooksValid(imageGo)) return;
+    void *imageComp = componentByTypeName(imageGo, "UnityEngine.UI.Image");
+    if (!ptrLooksValid(imageComp)) return;
+
+    // Graphic.m_Color @ 0x28 (Color = 4 floats RGBA).
+    float *color = (float *)((uint8_t *)imageComp + 0x28);
+    color[0] = 1.0f;
+    color[1] = 1.0f;
+    color[2] = 1.0f;
+    color[3] = 0.0f;
+    file_log([NSString stringWithFormat:
+              @"[CLONE-HIDE] imageComp=%p m_Color set to (1,1,1,0)", imageComp]);
+
+    if (!g_method_Graphic_SetAllDirty) {
+        if (!p_il2cpp_object_get_class || !p_il2cpp_class_get_method_from_name) return;
+        void *klass = p_il2cpp_object_get_class(imageComp);
+        if (!klass) return;
+        g_method_Graphic_SetAllDirty = p_il2cpp_class_get_method_from_name(klass, "SetAllDirty", 0);
+        file_log([NSString stringWithFormat:
+                  @"[CLONE-HIDE] cached Graphic.SetAllDirty method=%p (klass=%p)",
+                  g_method_Graphic_SetAllDirty, klass]);
+    }
+    if (!g_method_Graphic_SetAllDirty) return;
+    void *methodPtr = *(void **)g_method_Graphic_SetAllDirty;
+    if (!methodPtr) return;
+    ((Graphic_SetAllDirty_t)methodPtr)(imageComp, g_method_Graphic_SetAllDirty);
+    file_log(@"[CLONE-HIDE] SetAllDirty invoked");
+}
+
+// Probe each GameObject in the clone tree for a text component and log
+// it. Helps us figure out where the inherited "メニュー" label lives so we
+// can blank it on the clone. Recon-only, no mutations.
+static void reconTextComponents(void *cloneTf) {
+    if (!ptrLooksValid(cloneTf)) return;
+    void *cloneGo = gameObjectOf(cloneTf);
+    void *contentTf = transformChildByName(cloneTf, "Content");
+    void *contentGo = ptrLooksValid(contentTf) ? gameObjectOf(contentTf) : NULL;
+    void *imageTf = ptrLooksValid(contentTf) ? transformChildByName(contentTf, "Image") : NULL;
+    if (!ptrLooksValid(imageTf) && ptrLooksValid(contentTf)) {
+        imageTf = transformChildByName(contentTf, "IconImage");
+    }
+    void *imageGo = ptrLooksValid(imageTf) ? gameObjectOf(imageTf) : NULL;
+
+    void *grayTf = ptrLooksValid(imageTf) ? transformChildByName(imageTf, "GrayoutCover_Toggle") : NULL;
+    void *grayGo = ptrLooksValid(grayTf) ? gameObjectOf(grayTf) : NULL;
+
+    const char *names[] = {
+        "TMPro.TextMeshProUGUI",
+        "UnityEngine.UI.Text",
+        "TMPro.TextMeshPro",
+    };
+    struct { const char *tag; void *go; } pts[] = {
+        { "button-go",  cloneGo },
+        { "content-go", contentGo },
+        { "image-go",   imageGo },
+        { "gray-go",    grayGo },
+    };
+    for (int p = 0; p < 4; p++) {
+        if (!ptrLooksValid(pts[p].go)) continue;
+        for (int n = 0; n < 3; n++) {
+            void *c = componentByTypeName(pts[p].go, names[n]);
+            file_log([NSString stringWithFormat:
+                      @"[TEXT-RECON] %s GetComponent(\"%s\")=%p",
+                      pts[p].tag, names[n], c]);
+        }
+    }
+}
+
+// Read the m_Sprite (offset 0xD8) of the Image component on uiButton's
+// Content/Image leaf. Used by callers that want to harvest a sprite handle
+// from a sibling button without going through the full recon logger.
+static void *spriteOfButton(void *uiButton) {
+    if (!ptrLooksValid(uiButton)) return NULL;
+    void *btnGo = gameObjectOf(uiButton);
+    if (!ptrLooksValid(btnGo)) return NULL;
+    void *btnTf = goTransformOf(btnGo);
+    void *imageTf = findIconImageTransform(btnTf);
+    if (!ptrLooksValid(imageTf)) return NULL;
+    void *imageGo = gameObjectOf(imageTf);
+    if (!ptrLooksValid(imageGo)) return NULL;
+    void *imageComp = componentByTypeName(imageGo, "UnityEngine.UI.Image");
+    if (!ptrLooksValid(imageComp)) return NULL;
+    return readPtr(imageComp, 0xD8);
+}
+
+// Apply a sibling sprite to a freshly cloned home utility button. The
+// caller passes the gift / friend / menu button as a sprite source; this
+// avoids the title atlas-unload trap until a permanent sprite source (a
+// bundled PNG / SF Symbol generated Texture2D) is wired up.
+static bool applySiblingSpriteToClone(void *cloneGo, void *sourceBtn, const char *sourceTag) {
+    if (!ptrLooksValid(cloneGo) || !ptrLooksValid(sourceBtn)) return false;
+    void *sprite = spriteOfButton(sourceBtn);
+    if (!ptrLooksValid(sprite)) {
+        file_log([NSString stringWithFormat:
+                  @"[SPRITE-SWAP clone] no sprite on %s source", sourceTag]);
+        return false;
+    }
+    void *cloneTf = goTransformOf(cloneGo);
+    void *imageTf = findIconImageTransform(cloneTf);
+    if (!ptrLooksValid(imageTf)) return false;
+    void *imageGo = gameObjectOf(imageTf);
+    file_log([NSString stringWithFormat:
+              @"[SPRITE-SWAP clone] source=%s sprite=%p", sourceTag, sprite]);
+    return swapImageSpriteOnGo(imageGo, sprite, "clone");
+}
+
+// Phase 0 verification: apply the gift sprite to the clone. Gift sits on
+// the same home strip as the clone, so the atlas is guaranteed loaded for
+// the duration the clone is alive. If the clone renders gift icon visibly,
+// set_sprite + canvas invalidation work; the white title-swap result was
+// purely the title atlas getting unloaded post-scene-transition.
+//
+// Currently this also still tries the title sprite if no gift swap target
+// was passed in - title path is left in place for direct comparison.
+void kioueditor_applyTitleSpriteToClone(void *cloneGo) {
+    (void)cloneGo;
+    // Kept as a no-op placeholder so the call site in the clone path stays
+    // unchanged while we route through the new sibling sprite helper.
+    // The actual swap is now driven from hook_HUP_ctor via giftBtn.
+}
+
+// Public recon entry. Walks uiButton -> btnGo -> btnTf -> "Content" ->
+// "Image" -> GO -> GetComponent("UnityEngine.UI.Image") -> m_Sprite@+0xD8.
+// Logs every step so we can see where it bails when something is missing.
+void kioueditor_reconButtonImage(void *uiButton, const char *tag) {
+    if (!ptrLooksValid(uiButton)) {
+        file_log([NSString stringWithFormat:
+                  @"[SPRITE-RECON %s] button ptr invalid (%p)", tag, uiButton]);
+        return;
+    }
+    void *btnGo = gameObjectOf(uiButton);
+    void *btnTf = goTransformOf(btnGo);
+    file_log([NSString stringWithFormat:
+              @"[SPRITE-RECON %s] btn=%p go=%p tf=%p",
+              tag, uiButton, btnGo, btnTf]);
+    if (!ptrLooksValid(btnTf)) return;
+
+    void *imageTf = findIconImageTransform(btnTf);
+    if (!ptrLooksValid(imageTf)) {
+        file_log([NSString stringWithFormat:
+                  @"[SPRITE-RECON %s] no Image/IconImage leaf - dumping btnTf:",
+                  tag]);
+        dumpHierarchy(btnTf, 0, 3);
+        return;
+    }
+    void *imageGo = gameObjectOf(imageTf);
+    file_log([NSString stringWithFormat:
+              @"[SPRITE-RECON %s] imageTf=%p imageGo=%p",
+              tag, imageTf, imageGo]);
+    if (!ptrLooksValid(imageGo)) return;
+
+    void *imageComp = componentByTypeName(imageGo, "UnityEngine.UI.Image");
+    file_log([NSString stringWithFormat:
+              @"[SPRITE-RECON %s] GetComponent(\"UnityEngine.UI.Image\")=%p",
+              tag, imageComp]);
+    if (!ptrLooksValid(imageComp)) return;
+
+    void *sprite = readPtr(imageComp, 0xD8);
+    file_log([NSString stringWithFormat:
+              @"[SPRITE-RECON %s] m_Sprite=%p", tag, sprite]);
+
+    // Title side: cache the sprite so the home clone hook can swap it in.
+    if (tag && strcmp(tag, "title-menu") == 0 && ptrLooksValid(sprite)) {
+        g_titleMenuSprite = sprite;
+        file_log([NSString stringWithFormat:
+                  @"[SPRITE-RECON %s] cached title menu sprite for clone swap",
+                  tag]);
     }
 }
 
@@ -534,11 +908,24 @@ static UIBtn_OnPointerClick_t orig_UIBtn_OnPointerClick = NULL;
 // also avoids any future hidden subscribers).
 static void hook_UIBtn_OnPointerClick(void *self, void *eventData, void *methodInfo) {
     @try {
-        if (g_cloneGo && ptrLooksValid(self)) {
+        if (ptrLooksValid(self)) {
             void *thisGo = gameObjectOf(self);
-            if (thisGo == g_cloneGo) {
+            // Friend button taps go straight to the KiouEditor settings
+            // sheet, bypassing the retail "Coming soon" popup orig would
+            // otherwise show.
+            if (g_friendGo && thisGo == g_friendGo) {
                 file_log([NSString stringWithFormat:
-                          @"[HOME] click on clone! self=%p go=%p", self, thisGo]);
+                          @"[HOME] friend tap -> settings (self=%p go=%p)",
+                          self, thisGo]);
+                kioueditor_presentSettings();
+                return;
+            }
+            // Legacy: the menu-button clone is still recognised in case
+            // the clone code path is re-enabled later for testing.
+            if (g_cloneGo && thisGo == g_cloneGo) {
+                file_log([NSString stringWithFormat:
+                          @"[HOME] clone tap -> settings (self=%p go=%p)",
+                          self, thisGo]);
                 kioueditor_presentSettings();
                 return;
             }
@@ -573,13 +960,19 @@ static void hook_HUP_ctor(void *self, void *view) {
         // can always re-toggle the flag from the UI - making the clone
         // depend on this flag would lock the user out (no clone -> no
         // settings -> no way to flip the flag back on).
-        if (kiou_featureEnabled(KIOU_FEATURE_FRIEND_UNHIDE)
-            && ptrLooksValid(friendBtn)) {
+        // Friend button is always SetActive(true) because it doubles as
+        // the settings entry. No feature flag - turning it off would lock
+        // the user out of the KiouEditor sheet.
+        if (ptrLooksValid(friendBtn)) {
             void *friendGo = gameObjectOf(friendBtn);
             if (ptrLooksValid(friendGo)) {
                 file_log([NSString stringWithFormat:
                           @"[HOME] friend gameObject=%p -> SetActive(true)", friendGo]);
                 setActive(friendGo, true);
+                // Snapshot the friend GO so the OnPointerClick hook below
+                // can recognise the tap and route to settings instead of
+                // the "Coming soon" popup the orig handler shows.
+                g_friendGo = friendGo;
             } else {
                 file_log(@"[HOME] friend gameObject lookup failed");
             }
@@ -596,12 +989,23 @@ static void hook_HUP_ctor(void *self, void *view) {
         (void)logInstantiateMethods;
         (void)instantiateCloneNonGeneric;
         (void)instantiateCloneWithParent;
-        if (view != g_lastClonedView
+        // Clone creation disabled - friend button now doubles as the
+        // settings entry. Kept in source so the existing il2cpp bridge
+        // helpers compile and we can reactivate the path later if needed.
+        if (0 /* disabled */
+            && view != g_lastClonedView
             && ptrLooksValid(menuBtn) && ptrLooksValid(friendBtn)) {
             file_log([NSString stringWithFormat:
                       @"[HOME] presenter.ctor on main thread=%d (view %p -> %p)",
                       (int)[NSThread isMainThread],
                       g_lastClonedView, view]);
+            // One-shot recon: walk the live menu button's Image to confirm
+            // the same path works on the home side. Logs once.
+            static bool s_homeMenuReconDone = false;
+            if (!s_homeMenuReconDone) {
+                kioueditor_reconButtonImage(menuBtn, "home-menu");
+                s_homeMenuReconDone = true;
+            }
             void *menuGo = gameObjectOf(menuBtn);
             if (ptrLooksValid(menuGo)) {
                 void *cloneGo = instantiateCloneDirect(menuGo);
@@ -610,6 +1014,32 @@ static void hook_HUP_ctor(void *self, void *view) {
                     g_cloneGo = cloneGo;
                     file_log([NSString stringWithFormat:
                               @"[HOME] direct: clone gameObject=%p", cloneGo]);
+                    // No sprite swap. Instantiate copies the menu button's
+                    // Image component including its Sprite reference, which
+                    // is the same atlas-backed img_ico_menu (no embedded
+                    // text). Calling set_sprite to a foreign sprite was the
+                    // source of the title-swap white render (cross-atlas
+                    // unload). Leaving the inherited reference avoids it.
+                    (void)applySiblingSpriteToClone;
+                    (void)spriteOfButton;
+                    (void)kioueditor_applyTitleSpriteToClone;
+
+                    // One-shot recon: find which GameObject (button GO,
+                    // Content GO, Image GO) carries the "メニュー" Text
+                    // component on the clone. Once located we can blank
+                    // it instead of stripping the icon.
+                    static bool s_textReconDone = false;
+                    if (!s_textReconDone) {
+                        void *cloneTfRecon = goTransformOf(cloneGo);
+                        reconSpriteName(cloneTfRecon);
+                        reconTextComponents(cloneTfRecon);
+                        s_textReconDone = true;
+                    }
+                    // Make the inherited "menu + text" sprite invisible so
+                    // a UIKit overlay can render the real settings icon.
+                    void *cloneTfForLayout = goTransformOf(cloneGo);
+                    hideCloneImage(cloneTfForLayout);
+                    (void)readCloneScreenRect;
 
                     // Phase 2b: slot the clone into the friend button's parent
                     // container, one position below the friend button.
@@ -662,6 +1092,10 @@ static void hook_HUP_ctor(void *self, void *view) {
 
 void install_FriendUnhide_hook(uintptr_t unityBase) {
     resolveIl2cppBridge();
+    g_unityBaseAddr = unityBase;
+    if (!p_il2cpp_string_new) {
+        p_il2cpp_string_new = (il2cpp_string_new_t)dlsym(RTLD_DEFAULT, "il2cpp_string_new");
+    }
 
     {
         uintptr_t addr = unityBase + RVA_HOME_UTILITY_PRESENTER_CTOR;

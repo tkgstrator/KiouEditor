@@ -12,7 +12,6 @@ static NSString *featureKey(KiouFeature f) {
     switch (f) {
         case KIOU_FEATURE_ITEM_UNLOCK:     return @"kiou_editor.feature.item_unlock";
         case KIOU_FEATURE_CHAR_BYPASS:     return @"kiou_editor.feature.char_bypass";
-        case KIOU_FEATURE_FRIEND_UNHIDE:   return @"kiou_editor.feature.friend_unhide";
         case KIOU_FEATURE_PREMIUM_UNLOCK:  return @"kiou_editor.feature.premium_unlock";
         case KIOU_FEATURE_MATCH_ASSIST:    return @"kiou_editor.feature.match_assist";
         case KIOU_FEATURE_VOICE_UNLOCK:    return @"kiou_editor.feature.voice_unlock";
@@ -25,7 +24,6 @@ NSString *kiou_featureLabel(KiouFeature f) {
     switch (f) {
         case KIOU_FEATURE_ITEM_UNLOCK:    return @"Item Unlock";
         case KIOU_FEATURE_CHAR_BYPASS:    return @"Bypass Character";
-        case KIOU_FEATURE_FRIEND_UNHIDE:  return @"Friend Button";
         case KIOU_FEATURE_PREMIUM_UNLOCK: return @"Premium User";
         case KIOU_FEATURE_MATCH_ASSIST:   return @"Beginner Support";
         case KIOU_FEATURE_VOICE_UNLOCK:   return @"Voice Unlock";

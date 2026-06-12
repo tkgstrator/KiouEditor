@@ -172,7 +172,6 @@ void      kiou_setSelfUserId(NSString *uid);
 typedef NS_ENUM(NSInteger, KiouFeature) {
     KIOU_FEATURE_ITEM_UNLOCK = 0,    // Hook_SyncItemList ownership writes
     KIOU_FEATURE_CHAR_BYPASS,        // Hook_SelectCharacter SAFE_ID swap
-    KIOU_FEATURE_FRIEND_UNHIDE,      // Hook_FriendUnhide SetActive + clone
     KIOU_FEATURE_PREMIUM_UNLOCK,     // Hook_PremiumUnlock forced true
     KIOU_FEATURE_MATCH_ASSIST,       // Hook_MatchingPlayer enable beginner support
     KIOU_FEATURE_VOICE_UNLOCK,       // Hook_VoiceUnlock + Hook_SyncItemList intimacy pin
