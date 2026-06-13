@@ -69,6 +69,23 @@ static void hook_TitleScene_MoveNext(void *sm) {
     }
 }
 
+// Diagnostic: dump the first 16 bytes at `addr` as a hex string. The caller
+// uses this to compare pre-/post-MSHookFunction state so we can tell whether
+// the inline patch actually landed in memory (a true patch typically replaces
+// the prologue with an `LDR x16, ...; BR x16` trampoline shape).
+static NSString *kiou_hexAt(uintptr_t addr) {
+    const uint8_t *p = (const uint8_t *)addr;
+    NSMutableString *s = [NSMutableString stringWithCapacity:48];
+    @try {
+        for (int i = 0; i < 16; i++) {
+            [s appendFormat:@"%02x%@", p[i], (i == 15 ? @"" : @" ")];
+        }
+    } @catch (NSException *e) {
+        [s appendFormat:@"(read failed: %@)", e];
+    }
+    return s;
+}
+
 void install_Version_hook(uintptr_t unityBase) {
     p_il2cpp_string_new =
         (il2cpp_string_new_t)dlsym(RTLD_DEFAULT, "il2cpp_string_new");
@@ -77,9 +94,22 @@ void install_Version_hook(uintptr_t unityBase) {
         return;
     }
     uintptr_t addr = unityBase + RVA_TITLESCENE_MOVENEXT;
+
+    NSString *before = kiou_hexAt(addr);
+    file_log([NSString stringWithFormat:
+              @"[VERSION-DIAG] before MSHookFunction @0x%lx: %@", addr, before]);
+
     MSHookFunction((void *)addr,
                    (void *)hook_TitleScene_MoveNext,
                    (void **)&orig_TitleScene_MoveNext);
+
+    NSString *after = kiou_hexAt(addr);
+    file_log([NSString stringWithFormat:
+              @"[VERSION-DIAG] after  MSHookFunction @0x%lx: %@", addr, after]);
+    file_log([NSString stringWithFormat:
+              @"[VERSION-DIAG] orig_TitleScene_MoveNext=%p (NULL means MSHookFunction silently failed)",
+              orig_TitleScene_MoveNext]);
+
     file_log([NSString stringWithFormat:
               @"TitleScene.MoveNext hooked @0x%lx (base+0x%x), commit=%s",
               (unsigned long)addr, RVA_TITLESCENE_MOVENEXT,

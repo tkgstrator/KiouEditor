@@ -1,8 +1,28 @@
 #pragma once
 
 #import <Foundation/Foundation.h>
-#import <substrate.h>
 #import <stdint.h>
+
+// ---------------------------------------------------------------------------
+// Hook engine selection.
+//
+// JB / rootless builds (default): MobileSubstrate's MSHookFunction.
+// Jailed (Sideloadly-injected) builds: Dobby, statically linked from
+// vendor/dobby/lib/libdobby.a so the .dylib has zero external hook-engine
+// dependencies. The shim below maps MSHookFunction(...) onto DobbyHook(...)
+// so every Hook_*.m stays untouched.
+//
+// Selected at compile time via -DKIOU_JAILED=1 in the Makefile.
+// ---------------------------------------------------------------------------
+#if KIOU_JAILED
+#import "dobby.h"
+// MSHookFunction returns void; DobbyHook returns int. Cast the result away so
+// the call site keeps the original void-expression shape.
+#define MSHookFunction(sym, repl, orig) \
+    ((void)DobbyHook((void *)(sym), (void *)(repl), (void **)(orig)))
+#else
+#import <substrate.h>
+#endif
 
 // ===========================================================================
 // Internal.h — KiouEditor shared declarations.
